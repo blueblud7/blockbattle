@@ -1,0 +1,747 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>BlockBattle - 블록 배틀로얄</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 16 16%22%3E%3Crect width=%2216%22 height=%228%22 fill=%22%2316a34a%22/%3E%3Crect y=%228%22 width=%2216%22 height=%228%22 fill=%22%238b5a2b%22/%3E%3C/svg%3E">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Black+Han+Sans&family=Press+Start+2P&family=Noto+Sans+KR:wght@400;700;900&display=swap" rel="stylesheet">
+  <style>
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      user-select: none;
+      -webkit-user-select: none;
+    }
+
+    body, html {
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background-color: #0b1016;
+      font-family: 'Noto Sans KR', sans-serif;
+      color: #fff;
+    }
+
+    #game-canvas {
+      width: 100%;
+      height: 100%;
+      display: block;
+    }
+
+    /* UI Overlay Layer */
+    #ui-container {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      pointer-events: none;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+    }
+
+    /* Crosshair */
+    #crosshair {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      width: 20px;
+      height: 20px;
+      pointer-events: none;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: transform 0.1s;
+    }
+    #crosshair::before, #crosshair::after {
+      content: '';
+      position: absolute;
+      background: rgba(255, 255, 255, 0.9);
+      box-shadow: 0 0 2px #000;
+    }
+    #crosshair::before {
+      width: 18px;
+      height: 2px;
+    }
+    #crosshair::after {
+      width: 2px;
+      height: 18px;
+    }
+    #crosshair.hit {
+      transform: translate(-50%, -50%) scale(1.4);
+    }
+    #crosshair.hit::before, #crosshair.hit::after {
+      background: #ff3344;
+    }
+
+    /* Sniper Scope Overlay */
+    #scope-overlay {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background: radial-gradient(circle at center, transparent 32%, rgba(0,0,0,0.92) 34%, #000 70%);
+      display: none;
+      pointer-events: none;
+      z-index: 50;
+    }
+    #scope-overlay .scope-cross-h {
+      position: absolute;
+      top: 50%;
+      left: 20%;
+      right: 20%;
+      height: 2px;
+      background: rgba(0,0,0,0.8);
+      transform: translateY(-50%);
+    }
+    #scope-overlay .scope-cross-v {
+      position: absolute;
+      left: 50%;
+      top: 20%;
+      bottom: 20%;
+      width: 2px;
+      background: rgba(0,0,0,0.8);
+      transform: translateX(-50%);
+    }
+
+    /* Top Compass Bar */
+    #compass-container {
+      position: absolute;
+      top: 15px;
+      left: 50%;
+      transform: translateX(-50%);
+      width: 380px;
+      height: 32px;
+      background: rgba(10, 15, 25, 0.65);
+      border: 1px solid rgba(255, 255, 255, 0.2);
+      border-radius: 4px;
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      backdrop-filter: blur(4px);
+    }
+    #compass-tape {
+      font-family: 'Press Start 2P', monospace;
+      font-size: 11px;
+      letter-spacing: 2px;
+      color: #f1f5f9;
+      white-space: nowrap;
+      transition: transform 0.05s linear;
+    }
+    #compass-pointer {
+      width: 0;
+      height: 0;
+      border-left: 5px solid transparent;
+      border-right: 5px solid transparent;
+      border-top: 6px solid #eab308;
+      margin-top: 2px;
+    }
+
+    /* Top Left: Mini Map */
+    #minimap-box {
+      position: absolute;
+      top: 20px;
+      left: 20px;
+      width: 160px;
+      height: 160px;
+      border: 2px solid rgba(255, 255, 255, 0.4);
+      border-radius: 8px;
+      background: rgba(15, 23, 42, 0.85);
+      overflow: hidden;
+      box-shadow: 0 4px 15px rgba(0, 0, 0, 0.5);
+    }
+    #minimap-canvas {
+      width: 100%;
+      height: 100%;
+    }
+
+    /* Top Right: Match Status (Alive, Kills, Zone Status) */
+    #match-status {
+      position: absolute;
+      top: 20px;
+      right: 20px;
+      display: flex;
+      flex-direction: column;
+      align-items: flex-end;
+      gap: 10px;
+    }
+    .status-badge-row {
+      display: flex;
+      gap: 10px;
+    }
+    .status-badge {
+      background: rgba(15, 23, 42, 0.8);
+      border: 1px solid rgba(255, 255, 255, 0.2);
+      border-radius: 6px;
+      padding: 6px 14px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 14px;
+      font-weight: 700;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.4);
+    }
+    .status-badge .icon {
+      font-size: 16px;
+    }
+    .status-badge .val {
+      font-family: 'Press Start 2P', monospace;
+      font-size: 14px;
+      color: #38bdf8;
+    }
+    .status-badge.kills .val {
+      color: #f87171;
+    }
+
+    /* Zone Phase Notice */
+    #zone-notice-box {
+      background: rgba(220, 38, 38, 0.25);
+      border: 1px solid rgba(239, 68, 68, 0.6);
+      border-radius: 6px;
+      padding: 6px 14px;
+      font-size: 13px;
+      font-weight: 700;
+      color: #fecaca;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      animation: pulse 2s infinite;
+    }
+    @keyframes pulse {
+      0%, 100% { opacity: 0.9; }
+      50% { opacity: 0.5; }
+    }
+
+    /* Killfeed */
+    #killfeed {
+      position: absolute;
+      top: 110px;
+      right: 20px;
+      display: flex;
+      flex-direction: column;
+      align-items: flex-end;
+      gap: 6px;
+      max-width: 320px;
+    }
+    .kill-item {
+      background: rgba(15, 23, 42, 0.75);
+      border-left: 3px solid #ef4444;
+      padding: 4px 10px;
+      border-radius: 3px;
+      font-size: 12px;
+      animation: fadeSlide 0.3s ease-out;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .kill-item .killer { color: #60a5fa; font-weight: bold; }
+    .kill-item .victim { color: #f87171; font-weight: bold; }
+    .kill-item .weapon { color: #fbbf24; font-size: 11px; }
+
+    @keyframes fadeSlide {
+      from { opacity: 0; transform: translateX(20px); }
+      to { opacity: 1; transform: translateX(0); }
+    }
+
+    /* Parachute Prompt */
+    #drop-prompt {
+      position: absolute;
+      top: 65%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      background: rgba(0, 0, 0, 0.75);
+      border: 2px solid #eab308;
+      border-radius: 8px;
+      padding: 12px 24px;
+      text-align: center;
+      font-size: 18px;
+      font-weight: 900;
+      color: #fef08a;
+      display: none;
+      letter-spacing: 1px;
+      box-shadow: 0 0 20px rgba(234, 179, 8, 0.4);
+    }
+
+    /* Bottom Status: Health, Armor, Weapon & Ammo */
+    #bottom-ui {
+      position: absolute;
+      bottom: 20px;
+      left: 20px;
+      right: 20px;
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-end;
+    }
+
+    /* Health and Armor */
+    #player-stats {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      width: 260px;
+    }
+    .bar-wrapper {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .bar-label {
+      width: 45px;
+      font-size: 12px;
+      font-weight: bold;
+      color: #94a3b8;
+    }
+    .progress-bar {
+      flex: 1;
+      height: 16px;
+      background: rgba(0, 0, 0, 0.6);
+      border: 1px solid rgba(255, 255, 255, 0.25);
+      border-radius: 3px;
+      overflow: hidden;
+      position: relative;
+    }
+    .progress-fill {
+      height: 100%;
+      transition: width 0.15s ease-out;
+    }
+    .health-fill {
+      background: linear-gradient(90deg, #dc2626, #22c55e);
+      width: 100%;
+    }
+    .armor-fill {
+      background: linear-gradient(90deg, #2563eb, #38bdf8);
+      width: 50%;
+    }
+    .bar-text {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      font-size: 10px;
+      font-weight: 900;
+      text-shadow: 0 0 3px #000;
+    }
+
+    /* Hotbar */
+    #hotbar {
+      display: flex;
+      gap: 6px;
+      background: rgba(20, 20, 20, 0.8);
+      padding: 6px;
+      border: 2px solid #555;
+      border-radius: 6px;
+      box-shadow: 0 4px 20px rgba(0, 0, 0, 0.6);
+    }
+    .hotbar-slot {
+      width: 60px;
+      height: 60px;
+      background: #333;
+      border: 2px solid #666;
+      border-radius: 4px;
+      position: relative;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      transition: all 0.1s;
+    }
+    .hotbar-slot.active {
+      border: 3px solid #ffcc00;
+      background: #444;
+      transform: scale(1.08);
+      box-shadow: 0 0 10px rgba(255, 204, 0, 0.5);
+    }
+    .hotbar-slot .slot-num {
+      position: absolute;
+      top: 2px;
+      left: 4px;
+      font-size: 10px;
+      font-family: 'Press Start 2P', monospace;
+      color: #888;
+    }
+    .hotbar-slot .slot-icon {
+      font-size: 24px;
+    }
+    .hotbar-slot .slot-name {
+      font-size: 10px;
+      font-weight: bold;
+      color: #eee;
+      margin-top: 2px;
+      text-shadow: 0 1px 2px #000;
+    }
+    .hotbar-slot .slot-count {
+      position: absolute;
+      top: 3px;
+      right: 4px;
+      font-size: 11px;
+      font-weight: 900;
+      color: #fbbf24;
+      font-family: 'Press Start 2P', monospace;
+    }
+
+    /* Right: Current Weapon Ammo & Mode */
+    #ammo-box {
+      background: rgba(15, 23, 42, 0.85);
+      border: 1px solid rgba(255, 255, 255, 0.25);
+      border-radius: 8px;
+      padding: 10px 18px;
+      display: flex;
+      flex-direction: column;
+      align-items: flex-end;
+      min-width: 150px;
+      box-shadow: 0 4px 15px rgba(0,0,0,0.5);
+    }
+    #weapon-name {
+      font-size: 16px;
+      font-weight: 900;
+      color: #e2e8f0;
+      letter-spacing: 1px;
+    }
+    #ammo-numbers {
+      display: flex;
+      align-items: baseline;
+      gap: 6px;
+      margin-top: 4px;
+    }
+    #current-ammo {
+      font-family: 'Press Start 2P', monospace;
+      font-size: 26px;
+      color: #38bdf8;
+    }
+    #reserve-ammo {
+      font-family: 'Press Start 2P', monospace;
+      font-size: 14px;
+      color: #94a3b8;
+    }
+    #fire-mode {
+      font-size: 11px;
+      color: #eab308;
+      font-weight: 700;
+      margin-top: 2px;
+    }
+
+    /* Action Notification (Looting, Reloading) */
+    #action-toast {
+      position: absolute;
+      bottom: 120px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: rgba(0,0,0,0.7);
+      border: 1px solid rgba(255,255,255,0.3);
+      padding: 6px 18px;
+      border-radius: 20px;
+      font-size: 14px;
+      color: #f1f5f9;
+      opacity: 0;
+      transition: opacity 0.2s;
+    }
+
+    /* Damage Vignette */
+    #damage-overlay {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      box-shadow: inset 0 0 100px rgba(220, 38, 38, 0);
+      pointer-events: none;
+      transition: box-shadow 0.2s ease-out;
+    }
+
+    /* Modal Screens (Start, Victory, Game Over) */
+    .screen-modal {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background: rgba(5, 10, 20, 0.88);
+      backdrop-filter: blur(8px);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      pointer-events: auto;
+      z-index: 100;
+    }
+    .screen-modal h1 {
+      font-family: 'Black Han Sans', sans-serif;
+      font-size: 64px;
+      letter-spacing: 2px;
+      text-shadow: 0 4px 20px rgba(0, 0, 0, 0.8);
+      margin-bottom: 10px;
+    }
+    .screen-modal p {
+      font-size: 18px;
+      color: #94a3b8;
+      margin-bottom: 30px;
+      text-align: center;
+      max-width: 600px;
+      line-height: 1.6;
+    }
+    .key-instructions {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 12px 24px;
+      background: rgba(255, 255, 255, 0.05);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      padding: 20px 30px;
+      border-radius: 8px;
+      margin-bottom: 30px;
+    }
+    .key-item {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-size: 14px;
+    }
+    .key-badge {
+      background: #334155;
+      padding: 3px 8px;
+      border-radius: 4px;
+      font-family: monospace;
+      font-weight: bold;
+      color: #38bdf8;
+      border: 1px solid #475569;
+    }
+    .play-btn {
+      background: linear-gradient(135deg, #f59e0b, #d97706);
+      color: #fff;
+      font-family: 'Black Han Sans', sans-serif;
+      font-size: 26px;
+      padding: 16px 50px;
+      border: none;
+      border-radius: 8px;
+      cursor: pointer;
+      box-shadow: 0 8px 25px rgba(245, 158, 11, 0.4);
+      transition: all 0.2s;
+    }
+    .play-btn:hover {
+      transform: translateY(-2px) scale(1.03);
+      box-shadow: 0 12px 30px rgba(245, 158, 11, 0.6);
+    }
+    .play-btn:active {
+      transform: translateY(1px);
+    }
+
+    /* Victory Style */
+    #victory-screen {
+      display: none;
+      background: radial-gradient(circle at center, rgba(30, 20, 5, 0.95), rgba(5, 5, 10, 0.95));
+    }
+    #victory-screen h1 {
+      color: #fbbf24;
+      text-shadow: 0 0 30px rgba(251, 191, 36, 0.7);
+    }
+    .chicken-icon {
+      font-size: 80px;
+      margin-bottom: 20px;
+      animation: bounce 1s infinite alternate;
+    }
+    @keyframes bounce {
+      from { transform: translateY(0); }
+      to { transform: translateY(-15px); }
+    }
+
+    /* Game Over Style */
+    #gameover-screen {
+      display: none;
+    }
+    #gameover-screen h1 {
+      color: #ef4444;
+      text-shadow: 0 0 25px rgba(239, 68, 68, 0.6);
+    }
+
+    /* Block Placement Ghost / Info */
+    #block-info {
+      position: absolute;
+      bottom: 90px;
+      left: 50%;
+      transform: translateX(-50%);
+      font-size: 13px;
+      color: #cbd5e1;
+      background: rgba(0,0,0,0.6);
+      padding: 4px 12px;
+      border-radius: 4px;
+      display: none;
+    }
+  </style>
+</head>
+<body>
+  <!-- 3D WebGL Canvas -->
+  <canvas id="game-canvas"></canvas>
+
+  <!-- Damage Vignette Effect -->
+  <div id="damage-overlay"></div>
+
+  <!-- Sniper Scope Lens -->
+  <div id="scope-overlay">
+    <div class="scope-cross-h"></div>
+    <div class="scope-cross-v"></div>
+  </div>
+
+  <!-- UI Overlay -->
+  <div id="ui-container">
+    <!-- Top Compass -->
+    <div id="compass-container">
+      <div id="compass-tape">N ··· 15 ··· 30 ··· NE ··· 60 ··· 75 ··· E ··· 105 ··· 120 ··· SE ··· 150 ··· 165 ··· S ··· 195 ··· 210 ··· SW ··· 240 ··· 255 ··· W ··· 285 ··· 300 ··· NW ··· 330 ··· 345 ··· N</div>
+      <div id="compass-pointer"></div>
+    </div>
+
+    <!-- Top Left: Mini Map -->
+    <div id="minimap-box">
+      <canvas id="minimap-canvas" width="160" height="160"></canvas>
+    </div>
+
+    <!-- Top Right: Alive Count & Zone Status -->
+    <div id="match-status">
+      <div class="status-badge-row">
+        <div class="status-badge">
+          <span class="icon">👥</span>
+          <span>생존</span>
+          <span id="alive-count" class="val">20</span>
+        </div>
+        <div class="status-badge kills">
+          <span class="icon">💀</span>
+          <span>처치</span>
+          <span id="kill-count" class="val">0</span>
+        </div>
+      </div>
+      <div id="zone-notice-box">
+        <span id="zone-notice-icon">⚠️</span>
+        <span id="zone-notice-text">자기장 축소 대기 중: 60초</span>
+      </div>
+    </div>
+
+    <!-- Kill Feed -->
+    <div id="killfeed"></div>
+
+    <!-- Crosshair -->
+    <div id="crosshair"></div>
+
+    <!-- Parachute Drop Alert -->
+    <div id="drop-prompt">
+      🪂 [SPACE] 눌러서 낙하산 펼치기
+    </div>
+
+    <!-- Action Toast -->
+    <div id="action-toast">상자를 열었습니다!</div>
+    <div id="block-info">좌/우클릭: 블록 설치 · 곡괭이(1번)로 캐면 블록 +1</div>
+
+    <!-- Bottom HUD -->
+    <div id="bottom-ui">
+      <!-- Player HP / Armor -->
+      <div id="player-stats">
+        <div class="bar-wrapper">
+          <span class="bar-label">HP</span>
+          <div class="progress-bar">
+            <div id="health-bar" class="progress-fill health-fill"></div>
+            <span id="health-text" class="bar-text">100 / 100</span>
+          </div>
+        </div>
+        <div class="bar-wrapper">
+          <span class="bar-label">방어구</span>
+          <div class="progress-bar">
+            <div id="armor-bar" class="progress-fill armor-fill" style="width: 0%;"></div>
+            <span id="armor-text" class="bar-text">0 / 100</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Hotbar -->
+      <div id="hotbar">
+        <div class="hotbar-slot active" data-slot="1">
+          <span class="slot-num">1</span>
+          <span class="slot-icon">⛏️</span>
+          <span class="slot-name">곡괭이</span>
+        </div>
+        <div class="hotbar-slot" data-slot="2">
+          <span class="slot-num">2</span>
+          <span class="slot-icon">🔫</span>
+          <span class="slot-name">권총</span>
+          <span class="slot-count">15</span>
+        </div>
+        <div class="hotbar-slot" data-slot="3">
+          <span class="slot-num">3</span>
+          <span class="slot-icon">💥</span>
+          <span class="slot-name">샷건</span>
+          <span class="slot-count">5</span>
+        </div>
+        <div class="hotbar-slot" data-slot="4">
+          <span class="slot-num">4</span>
+          <span class="slot-icon">🩹</span>
+          <span class="slot-name">구급키트</span>
+          <span class="slot-count">2</span>
+        </div>
+        <div class="hotbar-slot" data-slot="5">
+          <span class="slot-num">5</span>
+          <span class="slot-icon">🧱</span>
+          <span class="slot-name">블록</span>
+          <span class="slot-count">30</span>
+        </div>
+      </div>
+
+      <!-- Ammo & Weapon Box -->
+      <div id="ammo-box">
+        <div id="weapon-name">곡괭이 (근접)</div>
+        <div id="ammo-numbers">
+          <span id="current-ammo">∞</span>
+          <span id="reserve-ammo">/ ∞</span>
+        </div>
+        <div id="fire-mode">채굴 / 근접 타격</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Start Modal -->
+  <div id="start-screen" class="screen-modal">
+    <h1>BLOCK BATTLE</h1>
+    <p>블록으로 만들어진 섬에서 펼쳐지는 20인 배틀로얄!<br>상자를 파밍하고, 자기장을 피해 살아남아 치킨을 차지하세요.</p>
+
+    <div class="key-instructions">
+      <div class="key-item"><span class="key-badge">W A S D</span> 이동 (공중 낙하 / 지상 이동)</div>
+      <div class="key-item"><span class="key-badge">SPACE</span> 점프 / 공중에서 낙하산 펼치기</div>
+      <div class="key-item"><span class="key-badge">마우스 좌클릭</span> 공격 / 총기 발사 / 블록 파괴</div>
+      <div class="key-item"><span class="key-badge">마우스 우클릭</span> 정조준(ADS/스코프) / 블록 설치</div>
+      <div class="key-item"><span class="key-badge">R</span> 재장전</div>
+      <div class="key-item"><span class="key-badge">1 ~ 5 / 휠</span> 무기 및 아이템 교체</div>
+      <div class="key-item"><span class="key-badge">E / F</span> 상자 열기 & 아이템 줍기</div>
+      <div class="key-item"><span class="key-badge">SHIFT</span> 달리기</div>
+    </div>
+
+    <button id="btn-start" class="play-btn">전장 강하 시작</button>
+  </div>
+
+  <!-- Victory Modal -->
+  <div id="victory-screen" class="screen-modal">
+    <div class="chicken-icon">🍗</div>
+    <h1>최후의 생존자! 승리했습니다!</h1>
+    <p>축하합니다! 최후의 1인으로 살아남아 전장을 지배했습니다.</p>
+    <div id="victory-stats" style="margin-bottom: 25px; font-size: 20px; color: #fde047;">
+      총 처치 수: <span id="victory-kills">0</span>킬
+    </div>
+    <button id="btn-restart-win" class="play-btn">다시 플레이</button>
+  </div>
+
+  <!-- Game Over Modal -->
+  <div id="gameover-screen" class="screen-modal">
+    <h1>사망하셨습니다</h1>
+    <p id="gameover-cause">자기장 밖에서 쓰러졌습니다.</p>
+    <div id="gameover-stats" style="margin-bottom: 25px; font-size: 18px; color: #cbd5e1;">
+      최종 순위: <span id="gameover-rank">12</span>위 / 총 <span id="gameover-kills">0</span>킬
+    </div>
+    <button id="btn-restart-lose" class="play-btn">다시 도전</button>
+  </div>
+
+  <script type="module" src="/src/main.ts"></script>
+</body>
+</html>
