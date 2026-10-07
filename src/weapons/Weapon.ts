@@ -17,6 +17,23 @@ export interface WeaponData {
   pellets?: number;
   reloadTime: number;
   icon: string;
+  scope?: number;    // current sight magnification (1 = iron sights)
+  maxScope?: number; // highest scope this gun accepts
+}
+
+// Default sight and the best scope each gun can mount
+const SCOPE_RULES: { [key: string]: { base: number; max: number } } = {
+  PISTOL: { base: 1, max: 2 },
+  SHOTGUN: { base: 1, max: 2 },
+  RIFLE: { base: 1, max: 4 },
+  SNIPER: { base: 2, max: 8 }
+};
+
+/** Scope magnification -> camera FOV (iron sights still zoom in a little). */
+export function fovForZoom(zoom: number, baseFov: number = 75): number {
+  const effective = zoom <= 1 ? 1.25 : zoom;
+  const half = (baseFov * Math.PI) / 360;
+  return (Math.atan(Math.tan(half) / effective) * 360) / Math.PI;
 }
 
 export class WeaponManager {
@@ -70,6 +87,8 @@ export class WeaponManager {
 
     this.weapons.set('PISTOL', {
       type: 'PISTOL',
+      scope: SCOPE_RULES.PISTOL.base,
+      maxScope: SCOPE_RULES.PISTOL.max,
       name: 'P92 권총',
       slotIndex: 2,
       damage: 34,
@@ -86,6 +105,8 @@ export class WeaponManager {
 
     this.weapons.set('SHOTGUN', {
       type: 'SHOTGUN',
+      scope: SCOPE_RULES.SHOTGUN.base,
+      maxScope: SCOPE_RULES.SHOTGUN.max,
       name: 'S1897 샷건',
       slotIndex: 3,
       damage: 18,
@@ -103,6 +124,8 @@ export class WeaponManager {
 
     this.weapons.set('RIFLE', {
       type: 'RIFLE',
+      scope: SCOPE_RULES.RIFLE.base,
+      maxScope: SCOPE_RULES.RIFLE.max,
       name: '돌격소총',
       slotIndex: 2,
       damage: 36,
@@ -119,6 +142,8 @@ export class WeaponManager {
 
     this.weapons.set('SNIPER', {
       type: 'SNIPER',
+      scope: SCOPE_RULES.SNIPER.base,
+      maxScope: SCOPE_RULES.SNIPER.max,
       name: '저격소총',
       slotIndex: 3,
       damage: 120,
@@ -194,11 +219,11 @@ export class WeaponManager {
       w.slotIndex = 3;
     } else {
       if (this.activeType === this.slot3Weapon) {
-        if (this.slot3Weapon) this.unlockedWeapons.delete(this.slot3Weapon);
+        if (this.slot3Weapon) this.dropGun(this.slot3Weapon);
         this.slot3Weapon = type;
         w.slotIndex = 3;
       } else {
-        if (this.slot2Weapon) this.unlockedWeapons.delete(this.slot2Weapon);
+        if (this.slot2Weapon) this.dropGun(this.slot2Weapon);
         this.slot2Weapon = type;
         w.slotIndex = 2;
       }
@@ -206,6 +231,44 @@ export class WeaponManager {
 
     this.selectWeapon(type);
     return w.name;
+  }
+
+  // A replaced gun leaves the inventory together with its scope
+  private dropGun(type: WeaponType) {
+    this.unlockedWeapons.delete(type);
+    const w = this.weapons.get(type);
+    const rule = SCOPE_RULES[type];
+    if (w && rule) w.scope = rule.base;
+  }
+
+  private gunsForScope(level: number): WeaponData[] {
+    const order = [this.activeType, this.slot2Weapon, this.slot3Weapon];
+    const seen = new Set<WeaponType>();
+    const result: WeaponData[] = [];
+    for (const t of order) {
+      if (!t || seen.has(t) || !this.hasGun(t)) continue;
+      seen.add(t);
+      const w = this.weapons.get(t)!;
+      if ((w.maxScope ?? 1) >= level && (w.scope ?? 1) < level) result.push(w);
+    }
+    return result;
+  }
+
+  canAttachScope(level: number): boolean {
+    return this.gunsForScope(level).length > 0;
+  }
+
+  /** Mounts the scope on the gun in hand if it fits, otherwise the other gun. Returns that gun. */
+  attachScope(level: number): WeaponData | null {
+    const gun = this.gunsForScope(level)[0];
+    if (!gun) return null;
+    gun.scope = level;
+    return gun;
+  }
+
+  /** Magnification of the sight on the weapon in hand (1 for non-guns). */
+  getZoom(): number {
+    return this.getActiveWeapon().scope ?? 1;
   }
 
   // Procedural 3D Voxel Models for Viewmodels

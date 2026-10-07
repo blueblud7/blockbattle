@@ -2,7 +2,13 @@ import * as THREE from 'three';
 import { TextureGenerator } from '../textures/TextureGenerator';
 import { sounds } from '../audio/SoundManager';
 
-export type LootItemType = 'PISTOL' | 'SHOTGUN' | 'RIFLE' | 'SNIPER' | 'MEDKIT' | 'ARMOR' | 'AMMO';
+export type LootItemType = 'PISTOL' | 'SHOTGUN' | 'RIFLE' | 'SNIPER' | 'MEDKIT' | 'ARMOR' | 'AMMO' | ScopeItemType;
+export type ScopeItemType = 'SCOPE2' | 'SCOPE4' | 'SCOPE8';
+
+export const SCOPE_LEVEL: { [key in ScopeItemType]: number } = { SCOPE2: 2, SCOPE4: 4, SCOPE8: 8 };
+export function isScope(type: string): type is ScopeItemType {
+  return type === 'SCOPE2' || type === 'SCOPE4' || type === 'SCOPE8';
+}
 
 export interface GroundItem {
   id: number;
@@ -32,7 +38,7 @@ export interface LootCrate {
   mesh: THREE.Mesh;
   position: THREE.Vector3;
   opened: boolean;
-  lootType: 'PISTOL' | 'SHOTGUN' | 'RIFLE' | 'SNIPER' | 'MEDKIT' | 'ARMOR';
+  lootType: 'PISTOL' | 'SHOTGUN' | 'RIFLE' | 'SNIPER' | 'MEDKIT' | 'ARMOR' | ScopeItemType;
 }
 
 type StructureType = 'house' | 'barracks' | 'warehouse' | 'watchtower';
@@ -875,6 +881,12 @@ export class World {
     const upperPool: LootItemType[] = ['RIFLE', 'SNIPER', 'MEDKIT', 'ARMOR'];
     const type2 = upperPool[Math.floor(Math.random() * upperPool.length)];
     this.spawnGroundItem(bx + 3, by + h1 + 2.2, bz + 3, type2, 45);
+
+    // Some houses also hide a scope
+    if (Math.random() < 0.55) {
+      const r = Math.random();
+      this.spawnGroundItem(bx + 6, by + 1.2, bz + 2, r < 0.5 ? 'SCOPE2' : r < 0.85 ? 'SCOPE4' : 'SCOPE8', 0);
+    }
   }
 
   // Military barracks (14x7)
@@ -903,6 +915,7 @@ export class World {
 
     this.spawnGroundItem(bx + 3, by + 1.2, bz + 3, 'RIFLE', 60);
     this.spawnGroundItem(bx + 10, by + 1.2, bz + 3, 'ARMOR', 0);
+    if (Math.random() < 0.5) this.spawnGroundItem(bx + 6, by + 1.2, bz + 3, Math.random() < 0.6 ? 'SCOPE4' : 'SCOPE2', 0);
   }
 
   // Warehouse / hangar (12x12)
@@ -969,6 +982,7 @@ export class World {
     }
 
     this.spawnGroundItem(bx, by + towerH + 1.2, bz, 'SNIPER', 15);
+    if (Math.random() < 0.6) this.spawnGroundItem(bx + 1, by + towerH + 1.2, bz + 1, Math.random() < 0.5 ? 'SCOPE8' : 'SCOPE4', 0);
   }
 
   // ---------- Loot ----------
@@ -985,7 +999,10 @@ export class World {
       'SNIPER': '저격소총',
       'MEDKIT': '구급키트',
       'ARMOR': '방탄 조끼',
-      'AMMO': '탄약 상자'
+      'AMMO': '탄약 상자',
+      'SCOPE2': '2배율 스코프',
+      'SCOPE4': '4배율 스코프',
+      'SCOPE8': '8배율 스코프'
     };
 
     const item: GroundItem = {
@@ -1013,7 +1030,10 @@ export class World {
       'SNIPER': 0xfacc15,
       'MEDKIT': 0xef4444,
       'ARMOR': 0x3b82f6,
-      'AMMO': 0xfde047
+      'AMMO': 0xfde047,
+      'SCOPE2': 0xe879f9,
+      'SCOPE4': 0xc084fc,
+      'SCOPE8': 0xa855f7
     };
     const ringMat = new THREE.MeshBasicMaterial({
       color: ringColors[type],
@@ -1080,6 +1100,22 @@ export class World {
       const blue = new THREE.MeshStandardMaterial({ color: 0x2563eb, metalness: 0.4 });
       const vest = new THREE.Mesh(new THREE.BoxGeometry(0.35, 0.4, 0.2), blue);
       group.add(vest);
+    } else if (isScope(type)) {
+      // Scope: black tube, longer for higher magnification, with a tinted lens
+      const len = type === 'SCOPE2' ? 0.22 : type === 'SCOPE4' ? 0.32 : 0.42;
+      const metal = new THREE.MeshStandardMaterial({ color: 0x111827, metalness: 0.8 });
+      const lensMat = new THREE.MeshBasicMaterial({ color: 0x67e8f9 });
+      const tube = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.06, len, 10), metal);
+      tube.rotation.x = Math.PI / 2;
+      const bell = new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.07, 0.08, 10), metal);
+      bell.rotation.x = Math.PI / 2;
+      bell.position.z = -len / 2;
+      const lens = new THREE.Mesh(new THREE.CircleGeometry(0.075, 12), lensMat);
+      lens.position.z = -len / 2 - 0.041;
+      lens.rotation.y = Math.PI;
+      const mount = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.06, 0.12), metal);
+      mount.position.y = -0.07;
+      group.add(tube, bell, lens, mount);
     } else {
       const gold = new THREE.MeshStandardMaterial({ color: 0xeab308, metalness: 0.6 });
       const ammoBox = new THREE.Mesh(new THREE.BoxGeometry(0.25, 0.2, 0.2), gold);
@@ -1152,7 +1188,8 @@ export class World {
     const lootPool: Array<LootCrate['lootType']> = [
       'RIFLE', 'SHOTGUN', 'SNIPER', 'PISTOL', 'MEDKIT', 'ARMOR',
       'RIFLE', 'SHOTGUN', 'MEDKIT', 'ARMOR', 'PISTOL', 'SNIPER',
-      'RIFLE', 'SNIPER', 'MEDKIT', 'ARMOR', 'SHOTGUN', 'RIFLE'
+      'RIFLE', 'SNIPER', 'MEDKIT', 'ARMOR', 'SHOTGUN', 'RIFLE',
+      'SCOPE4', 'SCOPE8', 'SCOPE4'
     ];
 
     // One supply crate just outside each structure (on its flattened margin)

@@ -217,7 +217,8 @@ class Game {
 
       if (Math.abs(deltaX) > 120 || Math.abs(deltaY) > 120) return;
 
-      const sensitivity = 0.0024;
+      // Slower look while zoomed in so scopes stay controllable
+      const sensitivity = 0.0024 * (this.camera.fov / 75);
       this.player.yaw -= deltaX * sensitivity;
       this.player.pitch -= deltaY * sensitivity;
 
@@ -287,7 +288,7 @@ class Game {
         const overlapsPlayer =
           p.x + 1 > pp.x - Player.RADIUS && p.x < pp.x + Player.RADIUS &&
           p.z + 1 > pp.z - Player.RADIUS && p.z < pp.z + Player.RADIUS &&
-          p.y + 1 > pp.y && p.y < pp.y + Player.HEIGHT;
+          p.y + 1 > pp.y && p.y < pp.y + this.player.height;
         if (!overlapsPlayer && this.player.weapons.weapons.get('BLOCK')!.currentAmmo > 0) {
           if (this.world.placeBlock(ray.placePos.x, ray.placePos.y, ray.placePos.z, World.BLOCK_WOOD_PLANK)) {
             this.player.weapons.consumeAmmo();
@@ -376,12 +377,13 @@ class Game {
     const maxDist = blockRay ? blockRay.distance : 45;
     let hitPoint = from.clone().addScaledVector(dir, maxDist);
 
-    // Raycast toward player
-    const playerCenter = this.player.position.clone().add(new THREE.Vector3(0, 1.0, 0));
+    // Raycast toward the player's body (smaller target when crouched / prone)
+    const playerCenter = this.player.position.clone().add(new THREE.Vector3(0, this.player.aimHeight, 0));
     const ray = new THREE.Ray(from, dir);
-    const distToPlayer = ray.distanceToPoint(playerCenter);
+    const hb = this.player.getHitbox();
+    const distToPlayer = Math.sqrt(ray.distanceSqToSegment(hb.a, hb.b));
 
-    if (!this.player.inPlane && distToPlayer < 0.75 && from.distanceTo(playerCenter) < maxDist) {
+    if (!this.player.inPlane && distToPlayer < hb.radius && from.distanceTo(playerCenter) < maxDist) {
       hitPoint = playerCenter;
       this.player.takeDamage(damage, true, shooterName);
 
@@ -573,7 +575,9 @@ class Game {
       // 3. Update Player
       this.player.update(delta, this.zone, this.onPlayerShoot);
 
-      // 4. Update Bots
+      // 4. Update Bots (a crouched / prone player is harder to spot and to hit)
+      Bot.playerAimHeight = this.player.aimHeight;
+      Bot.playerDetectRange = this.player.stance === 'prone' ? 20 : this.player.stance === 'crouch' ? 30 : 38;
       let currentAlive = this.player.isAlive ? 1 : 0;
       for (const bot of this.bots) {
         if (bot.isAlive) {

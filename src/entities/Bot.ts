@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { World, LootItemType } from '../world/World';
+import { World, LootItemType, isScope } from '../world/World';
 import { ZoneManager } from '../zone/ZoneManager';
 
 export class Bot {
@@ -52,6 +52,9 @@ export class Bot {
   killedBy: string | null = null;
   private shirtColor: number = 0x2563eb;
   static readonly RADIUS = 0.3;
+  // Set by the game each frame from the player's stance
+  static playerAimHeight = 1.0;
+  static playerDetectRange = 38;
   static readonly HEIGHT = 1.8;
 
   constructor(id: number, name: string, scene: THREE.Scene, world: World, startPos: THREE.Vector3) {
@@ -277,11 +280,11 @@ export class Bot {
     this.mesh.position.copy(this.position);
   }
 
-  private canSee(target: THREE.Vector3): boolean {
+  private canSee(target: THREE.Vector3, aimHeight: number = 1.2): boolean {
     const eye = this.position.clone();
     eye.y += 1.5;
     const aim = target.clone();
-    aim.y += 1.2;
+    aim.y += aimHeight;
     return this.world.hasLineOfSight(eye, aim);
   }
 
@@ -308,7 +311,7 @@ export class Bot {
 
     // Check Player
     const distToPlayer = this.position.distanceTo(playerPos);
-    if (distToPlayer < closestDist && this.canSee(playerPos)) {
+    if (distToPlayer < Math.min(closestDist, Bot.playerDetectRange) && this.canSee(playerPos, Bot.playerAimHeight + 0.1)) {
       closestTarget = { position: playerPos, isPlayer: true };
       closestDist = distToPlayer;
     }
@@ -339,7 +342,7 @@ export class Bot {
 
     // 1. Check Ground Loot Items (Weapons in houses/barracks)
     for (const item of this.world.groundItems) {
-      if (item.picked) continue;
+      if (item.picked || isScope(item.type)) continue; // bots don't use scopes
       const d = this.position.distanceTo(item.position);
       if (d < minD) {
         minD = d;
@@ -424,7 +427,7 @@ export class Bot {
         const crate = this.targetLoot.ref;
         crate.opened = true;
         crate.mesh.scale.set(0.01, 0.01, 0.01);
-        const wType: LootItemType = (crate.lootType === 'MEDKIT' || crate.lootType === 'ARMOR')
+        const wType: LootItemType = (crate.lootType === 'MEDKIT' || crate.lootType === 'ARMOR' || isScope(crate.lootType))
           ? 'RIFLE'
           : crate.lootType;
         this.equipWeapon(wType);
@@ -512,13 +515,14 @@ export class Bot {
 
     // Shoot interval (only with a clear line of fire)
     this.shootTimer -= delta;
-    if (this.shootTimer <= 0 && dist < 45 && this.canSee(targetPos)) {
+    const aimH = this.targetEntity.isPlayer ? Bot.playerAimHeight : 1.0;
+    if (this.shootTimer <= 0 && dist < 45 && this.canSee(targetPos, aimH + 0.1)) {
       this.shootTimer = this.shootCooldown;
       this.shootCooldown = 0.5 + Math.random() * 0.6;
 
       // Shooting direction with slight inaccuracy
       const dir = new THREE.Vector3()
-        .subVectors(targetPos.clone().add(new THREE.Vector3(0, 1.0, 0)), this.position.clone().add(new THREE.Vector3(0, 1.2, 0)))
+        .subVectors(targetPos.clone().add(new THREE.Vector3(0, aimH, 0)), this.position.clone().add(new THREE.Vector3(0, 1.2, 0)))
         .normalize();
 
       dir.x += (Math.random() - 0.5) * 0.12;

@@ -25,6 +25,7 @@ export class HUD {
   currentAmmoEl: HTMLElement;
   reserveAmmoEl: HTMLElement;
   fireModeEl: HTMLElement;
+  stanceEl: HTMLElement;
   hotbarSlots: NodeListOf<HTMLElement>;
   killfeedEl: HTMLElement;
   dropPromptEl: HTMLElement;
@@ -51,6 +52,7 @@ export class HUD {
     this.currentAmmoEl = document.getElementById('current-ammo')!;
     this.reserveAmmoEl = document.getElementById('reserve-ammo')!;
     this.fireModeEl = document.getElementById('fire-mode')!;
+    this.stanceEl = document.getElementById('stance-indicator')!;
     this.hotbarSlots = document.querySelectorAll('.hotbar-slot');
     this.killfeedEl = document.getElementById('killfeed')!;
     this.dropPromptEl = document.getElementById('drop-prompt')!;
@@ -214,7 +216,9 @@ export class HUD {
     if (active.maxAmmo > 0) {
       this.currentAmmoEl.textContent = `${active.currentAmmo}`;
       this.reserveAmmoEl.textContent = `/ ${active.reserveAmmo}`;
-      this.fireModeEl.textContent = active.automatic ? '⚡ 완전 연사' : '단발 사격';
+      const scope = active.scope ?? 1;
+      this.fireModeEl.textContent = (active.automatic ? '⚡ 완전 연사' : '단발 사격') +
+        (scope > 1 ? ` · 🔭 ${scope}배율` : ' · 기본 조준');
     } else if (active.type === 'MEDKIT') {
       this.currentAmmoEl.textContent = `${active.currentAmmo}`;
       this.reserveAmmoEl.textContent = `개 남음`;
@@ -228,6 +232,11 @@ export class HUD {
       this.reserveAmmoEl.textContent = '/ ∞';
       this.fireModeEl.textContent = '채굴 / 근접 타격';
     }
+
+    // Stance
+    const icon = this.player.stance === 'prone' ? '🛌' : this.player.stance === 'crouch' ? '🧎' : '🧍';
+    const stanceText = `${icon} ${this.player.stanceLabel}`;
+    if (this.stanceEl.textContent !== stanceText) this.stanceEl.textContent = stanceText;
 
     // Block instruction toast
     this.blockInfoEl.style.display = (active.type === 'BLOCK') ? 'block' : 'none';

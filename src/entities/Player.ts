@@ -1,8 +1,17 @@
 import * as THREE from 'three';
-import { World } from '../world/World';
-import { WeaponManager, WeaponType } from '../weapons/Weapon';
+import { World, isScope, SCOPE_LEVEL } from '../world/World';
+import { WeaponManager, WeaponType, fovForZoom } from '../weapons/Weapon';
 import { sounds } from '../audio/SoundManager';
 import { ZoneManager } from '../zone/ZoneManager';
+
+export type Stance = 'stand' | 'crouch' | 'prone';
+
+// Body height, eye height, move speed and weapon spread per stance
+const STANCES: { [key in Stance]: { height: number; eye: number; speed: number; spread: number; label: string } } = {
+  stand: { height: 1.8, eye: 1.6, speed: 1.0, spread: 1.0, label: '서기' },
+  crouch: { height: 1.25, eye: 1.05, speed: 0.55, spread: 0.7, label: '앉기' },
+  prone: { height: 0.6, eye: 0.4, speed: 0.25, spread: 0.45, label: '엎드리기' }
+};
 
 export class Player {
   camera: THREE.PerspectiveCamera;
@@ -32,6 +41,60 @@ export class Player {
   static readonly HEIGHT = 1.8;
   static readonly EYE_HEIGHT = 1.6;
   lastDamageSource: string = '자기장';
+
+  // Stance (C: crouch, Z: prone)
+  stance: Stance = 'stand';
+  private eyeHeight: number = Player.EYE_HEIGHT;
+  private suppressJump: boolean = false; // Space used to stand up shouldn't also jump
+
+  get height(): number {
+    return STANCES[this.stance].height;
+  }
+
+  get stanceLabel(): string {
+    return STANCES[this.stance].label;
+  }
+
+  /** Switch stance; standing up needs head room. Returns false if blocked. */
+  setStance(next: Stance, silent: boolean = false): boolean {
+    if (next === this.stance) return true;
+    if (this.inPlane || this.isAirborne || this.isInWater) {
+      if (next !== 'stand') return false;
+    }
+    if (STANCES[next].height > this.height &&
+        this.world.collidesBox(this.position.x, this.position.y + 0.01, this.position.z, Player.RADIUS, STANCES[next].height)) {
+      if (!silent) this.showToast('⛔ 위가 막혀 있어 일어설 수 없습니다');
+      return false;
+    }
+    this.stance = next;
+    return true;
+  }
+
+  resetStance() {
+    this.stance = 'stand';
+    this.eyeHeight = Player.EYE_HEIGHT;
+    this.suppressJump = false;
+  }
+
+  /** Body capsule used for incoming hits (segment + radius). */
+  getHitbox(): { a: THREE.Vector3; b: THREE.Vector3; radius: number } {
+    const p = this.position;
+    if (this.stance === 'prone') {
+      // Lying flat along the view direction
+      const f = new THREE.Vector3(-Math.sin(this.yaw), 0, -Math.cos(this.yaw)).multiplyScalar(0.5);
+      const c = new THREE.Vector3(p.x, p.y + 0.25, p.z);
+      return { a: c.clone().sub(f), b: c.clone().add(f), radius: 0.3 };
+    }
+    if (this.stance === 'crouch') {
+      return { a: new THREE.Vector3(p.x, p.y + 0.35, p.z), b: new THREE.Vector3(p.x, p.y + 0.95, p.z), radius: 0.45 };
+    }
+    return { a: new THREE.Vector3(p.x, p.y + 0.35, p.z), b: new THREE.Vector3(p.x, p.y + 1.45, p.z), radius: 0.5 };
+  }
+
+  /** Height above the feet that enemies aim at. */
+  get aimHeight(): number {
+    return this.stance === 'prone' ? 0.25 : this.stance === 'crouch' ? 0.65 : 1.0;
+  }
 
   // Mouse Look (Euler angles)
   pitch: number = -0.35;
@@ -75,6 +138,21 @@ export class Player {
       this.keys[e.code] = true;
       const k = e.key.toLowerCase();
       if (e.code === 'Space') e.preventDefault();
+
+      // Stance: C = crouch toggle, Z = prone toggle (Korean IME: ㅊ / ㅋ)
+      if (!e.repeat && !this.inPlane && !this.isAirborne) {
+        if (e.code === 'KeyC' || k === 'c' || k === 'ㅊ') {
+          this.setStance(this.stance === 'crouch' ? 'stand' : 'crouch');
+        }
+        if (e.code === 'KeyZ' || k === 'z' || k === 'ㅋ') {
+          this.setStance(this.stance === 'prone' ? 'stand' : 'prone');
+        }
+        // Space while crouched / prone stands up instead of jumping
+        if ((e.code === 'Space' || k === ' ') && this.stance !== 'stand') {
+          this.setStance('stand');
+          this.suppressJump = true;
+        }
+      }
 
       // Plane eject or parachute deploy (ignore auto-repeat so holding SPACE doesn't do both)
       if (!e.repeat && (e.code === 'Space' || k === ' ' || e.code === 'KeyF' || k === 'f' || k === 'ㄹ')) {
@@ -134,7 +212,10 @@ export class Player {
       if (k === 's' || k === 'ㄴ') this.keys['KeyS'] = false;
       if (k === 'a' || k === 'ㅁ') this.keys['KeyA'] = false;
       if (k === 'd' || k === 'ㅇ') this.keys['KeyD'] = false;
-      if (e.code === 'Space' || k === ' ') this.keys['Space'] = false;
+      if (e.code === 'Space' || k === ' ') {
+        this.keys['Space'] = false;
+        this.suppressJump = false;
+      }
     });
 
     // Releasing keys while the window is unfocused would otherwise leave them stuck "down"
@@ -184,6 +265,7 @@ export class Player {
     if (!this.isAlive) return;
 
     if (this.inPlane) {
+      if (this.stance !== 'stand') this.resetStance();
       this.weapons.viewmodelGroup.visible = false;
       const fDir = new THREE.Vector3(Math.sin(this.planeYaw), 0, Math.cos(this.planeYaw));
       // Camera positioned 24m behind the cargo plane and 9.5m above
@@ -231,7 +313,9 @@ export class Player {
     }
 
     // Camera follow player position and sync continuous rotation
-    this.camera.position.set(this.position.x, this.position.y + Player.EYE_HEIGHT, this.position.z);
+    const targetEye = this.isAirborne ? Player.EYE_HEIGHT : STANCES[this.stance].eye;
+    this.eyeHeight += (targetEye - this.eyeHeight) * Math.min(1, 12 * delta);
+    this.camera.position.set(this.position.x, this.position.y + this.eyeHeight, this.position.z);
     this.camera.rotation.set(0, 0, 0);
     this.camera.rotation.order = 'YXZ';
     this.camera.rotation.y = this.yaw;
@@ -241,18 +325,24 @@ export class Player {
     const isAiming = this.isRightMouseDown && this.weapons.activeType !== 'BLOCK';
     this.weapons.isAiming = isAiming;
 
-    // Adjust camera FOV for ADS
-    const targetFov = isAiming
-      ? (this.weapons.activeType === 'SNIPER' ? 20 : 50)
-      : 75;
-    this.camera.fov += (targetFov - this.camera.fov) * 15 * delta;
+    // Adjust camera FOV for ADS according to the mounted scope
+    const zoom = this.weapons.getZoom();
+    const targetFov = isAiming ? fovForZoom(zoom) : 75;
+    this.camera.fov += (targetFov - this.camera.fov) * Math.min(1, 15 * delta);
     this.camera.updateProjectionMatrix();
 
-    // Toggle scope overlay
+    // Scope overlays: 4x/8x = full scope picture, 2x = red-dot reticle
+    const scoped = isAiming && zoom >= 4;
     const scopeEl = document.getElementById('scope-overlay');
-    if (scopeEl) {
-      scopeEl.style.display = (isAiming && this.weapons.activeType === 'SNIPER') ? 'block' : 'none';
+    if (scopeEl) scopeEl.style.display = scoped ? 'block' : 'none';
+    const dotEl = document.getElementById('reddot-overlay');
+    if (dotEl) dotEl.style.display = isAiming && zoom === 2 ? 'block' : 'none';
+    const zoomEl = document.getElementById('zoom-label');
+    if (zoomEl) {
+      zoomEl.style.display = isAiming && zoom > 1 ? 'block' : 'none';
+      zoomEl.textContent = `${zoom}x`;
     }
+    this.weapons.viewmodelGroup.visible = !scoped;
 
     // Viewmodel weapon update
     const isMoving = this.keys['KeyW'] || this.keys['KeyS'] || this.keys['KeyA'] || this.keys['KeyD'];
@@ -299,7 +389,7 @@ export class Player {
       this.isParachuteOpen = false;
       this.velocity.set(0, 0, 0);
       this.isOnGround = surfaceY >= World.WATER_LEVEL;
-      this.world.unstick(this.position, Player.RADIUS, Player.HEIGHT);
+      this.world.unstick(this.position, Player.RADIUS, this.height);
     }
   }
 
@@ -307,16 +397,23 @@ export class Player {
 
   private updateGroundMovement(delta: number) {
     const R = Player.RADIUS;
-    const H = Player.HEIGHT;
-    this.world.unstick(this.position, R, H);
 
     // Swimming when the body is mostly under the water surface
     const isInWater = this.position.y < World.WATER_LEVEL - 0.4;
     this.isInWater = isInWater;
+    if (isInWater && this.stance !== 'stand') this.stance = 'stand'; // can't crouch/lie down while swimming
     const floatY = World.WATER_LEVEL - 1.3; // feet height that keeps the eyes just above water
 
-    const isSprinting = this.keys['ShiftLeft'] || this.keys['ShiftRight'];
-    const baseSpeed = isInWater ? this.moveSpeed * 0.8 : this.moveSpeed;
+    const wantsMove = this.keys['KeyW'] || this.keys['KeyS'] || this.keys['KeyA'] || this.keys['KeyD'];
+    let isSprinting = !!(this.keys['ShiftLeft'] || this.keys['ShiftRight']);
+    // Sprinting gets you back on your feet (if there's room)
+    if (isSprinting && wantsMove && this.stance !== 'stand') this.setStance('stand', true);
+    if (this.stance !== 'stand') isSprinting = false;
+
+    const H = this.height;
+    this.world.unstick(this.position, R, H);
+
+    const baseSpeed = (isInWater ? this.moveSpeed * 0.8 : this.moveSpeed) * STANCES[this.stance].speed;
     const currentSpeed = (isSprinting ? baseSpeed * this.sprintMultiplier : baseSpeed) * delta;
 
     const forward = new THREE.Vector3(0, 0, -1).applyAxisAngle(new THREE.Vector3(0, 1, 0), this.yaw);
@@ -358,7 +455,7 @@ export class Player {
     this.isOnGround = this.world.moveVertical(this.position, this.velocity, delta, R, H);
 
     // Jump (only on dry ground)
-    if (this.keys['Space'] && this.isOnGround && !isInWater) {
+    if (this.keys['Space'] && this.isOnGround && !isInWater && this.stance === 'stand' && !this.suppressJump) {
       this.velocity.y = 8.5;
       this.isOnGround = false;
     }
@@ -367,6 +464,7 @@ export class Player {
   private canAutoLoot(type: string): boolean {
     if (type === 'MEDKIT' || type === 'ARMOR') return true;
     if (type === 'AMMO') return this.weapons.getAmmoTarget() !== null;
+    if (isScope(type)) return this.weapons.canAttachScope(SCOPE_LEVEL[type]);
     const gun = type as WeaponType;
     return this.weapons.hasGun(gun) || this.weapons.hasFreeGunSlot();
   }
@@ -410,6 +508,7 @@ export class Player {
     }
 
     // 3. Firearms & Pickaxe
+    const sm = STANCES[this.stance].spread; // crouching / lying down steadies your aim
     if (this.weapons.canFire()) {
       this.weapons.consumeAmmo();
 
@@ -425,19 +524,19 @@ export class Player {
         this.weapons.applyRecoil();
         if (weapon.type === 'PISTOL') {
           sounds.playPistol();
-          onPlayerShoot(this.camera.position, dir, weapon.damage, this.weapons.isAiming ? 0.005 : weapon.spread);
+          onPlayerShoot(this.camera.position, dir, weapon.damage, (this.weapons.isAiming ? 0.005 : weapon.spread) * sm);
       } else if (weapon.type === 'SHOTGUN') {
         sounds.playShotgun();
         const pellets = weapon.pellets || 6;
         for (let i = 0; i < pellets; i++) {
-          onPlayerShoot(this.camera.position, dir, weapon.damage, weapon.spread);
+          onPlayerShoot(this.camera.position, dir, weapon.damage, weapon.spread * sm);
         }
       } else if (weapon.type === 'RIFLE') {
         sounds.playRifle();
-        onPlayerShoot(this.camera.position, dir, weapon.damage, this.weapons.isAiming ? 0.01 : weapon.spread);
+        onPlayerShoot(this.camera.position, dir, weapon.damage, (this.weapons.isAiming ? 0.01 : weapon.spread) * sm);
       } else if (weapon.type === 'SNIPER') {
         sounds.playSniper();
-        onPlayerShoot(this.camera.position, dir, weapon.damage, this.weapons.isAiming ? 0.001 : 0.08);
+        onPlayerShoot(this.camera.position, dir, weapon.damage, (this.weapons.isAiming ? 0.001 : 0.08) * sm);
       }
     }
 
@@ -482,6 +581,15 @@ export class Player {
     } else if (item.type === 'ARMOR') {
       this.armor = Math.min(100, this.armor + 75);
       text = '🛡️ 방탄 조끼 장착! (방어구 +75)';
+    } else if (isScope(item.type)) {
+      const gun = this.weapons.attachScope(SCOPE_LEVEL[item.type as keyof typeof SCOPE_LEVEL]);
+      if (!gun) {
+        item.picked = false;
+        item.mesh.visible = true;
+        this.showToast(this.scopeRefusal());
+        return;
+      }
+      text = `🔭 ${item.name} → [${gun.name}] 장착! 우클릭으로 ${gun.scope}배 조준`;
     } else if (item.type === 'AMMO') {
       const target = this.weapons.getAmmoTarget();
       if (!target) {
@@ -521,7 +629,18 @@ export class Player {
     this.showToast(`⚰️ [${dc.victimName}] 전리품 상자 파밍 완료! (+${dc.ammoCount}발)`);
   }
 
+  private scopeRefusal(): string {
+    if (!this.weapons.slot2Weapon && !this.weapons.slot3Weapon) {
+      return '🔭 스코프를 장착하려면 먼저 총을 구하세요';
+    }
+    return '🔭 장착할 총이 없습니다 (권총·샷건 2배, 돌격소총 4배, 저격소총 8배까지)';
+  }
+
   lootSupplyCrate(crate: any) {
+    if (isScope(crate.lootType) && !this.weapons.canAttachScope(SCOPE_LEVEL[crate.lootType as keyof typeof SCOPE_LEVEL])) {
+      this.showToast(this.scopeRefusal());
+      return; // leave the crate closed until there's a gun for it
+    }
     crate.opened = true;
     crate.mesh.scale.set(0.01, 0.01, 0.01);
     sounds.playCrateOpen();
@@ -533,6 +652,10 @@ export class Player {
     } else if (crate.lootType === 'ARMOR') {
       this.armor = 100;
       text = '🛡️ 레벨 3 최고급 방탄 조끼 획득!';
+    } else if (isScope(crate.lootType)) {
+      const level = SCOPE_LEVEL[crate.lootType as keyof typeof SCOPE_LEVEL];
+      const gun = this.weapons.attachScope(level)!;
+      text = `📦 보급품: ${level}배율 스코프 → [${gun.name}] 장착!`;
     } else {
       const name = this.weapons.equipWeapon(crate.lootType, 60);
       text = `📦 보급 무기: ${name} 획득! (+60발)`;
