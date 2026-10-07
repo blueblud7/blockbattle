@@ -1,3 +1,4 @@
+import { initAnalytics, trackMatchStart, trackMatchEnd } from './analytics';
 import * as THREE from 'three';
 import { World } from './world/World';
 import { Player } from './entities/Player';
@@ -137,7 +138,7 @@ class Game {
       }
     };
 
-    const startGameAction = () => {
+    const startGameAction = (isRestart: boolean = false) => {
       console.log('Starting match: C-130 수송기 비행 시작!');
       startModal.style.display = 'none';
       document.getElementById('victory-screen')!.style.display = 'none';
@@ -169,17 +170,18 @@ class Game {
 
       this.isGameActive = true;
       this.matchOver = false;
+      trackMatchStart(isRestart);
       requestLock();
     };
 
-    btnStart.addEventListener('click', startGameAction);
+    btnStart.addEventListener('click', () => startGameAction(false));
     btnRestartWin.addEventListener('click', () => {
       this.restartMatch();
-      startGameAction();
+      startGameAction(true);
     });
     btnRestartLose.addEventListener('click', () => {
       this.restartMatch();
-      startGameAction();
+      startGameAction(true);
     });
 
     // Also lock pointer when clicking canvas during active game
@@ -462,6 +464,7 @@ class Game {
     const causeEl = document.getElementById('gameover-cause')!;
 
     rankEl.textContent = `${this.aliveCount}`;
+    trackMatchEnd(killer === '자기장' ? 'zone' : 'death', this.aliveCount, this.player.kills);
     killsEl.textContent = `${this.player.kills}`;
     causeEl.textContent = killer === '자기장'
       ? '자기장 밖에서 쓰러졌습니다.'
@@ -482,6 +485,7 @@ class Game {
       const victoryScreen = document.getElementById('victory-screen')!;
       const victoryKills = document.getElementById('victory-kills')!;
       victoryKills.textContent = `${this.player.kills}`;
+      trackMatchEnd('win', 1, this.player.kills);
       victoryScreen.style.display = 'flex';
     }
   }
@@ -632,6 +636,7 @@ class Game {
 
 // Start game
 function initGame() {
+  initAnalytics();
   console.log('[BlockBattle] Initializing game instance...');
   try {
     const game = new Game();
