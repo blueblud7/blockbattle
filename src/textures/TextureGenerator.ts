@@ -119,6 +119,47 @@ export class TextureGenerator {
     return tex;
   }
 
+  // Gravel road: mottled grey-brown pebbles
+  static getGravel(): THREE.CanvasTexture {
+    if (this.cache.has('gravel')) return this.cache.get('gravel')!;
+    const [canvas, ctx] = this.createPixelCanvas(16);
+    for (let x = 0; x < 16; x++) {
+      for (let y = 0; y < 16; y++) {
+        const v = Math.floor(150 + (Math.random() - 0.5) * 50);
+        const warm = Math.random() < 0.3 ? 12 : 0;
+        ctx.fillStyle = `rgb(${v + warm},${v - 4},${v - 14})`;
+        ctx.fillRect(x, y, 1, 1);
+      }
+    }
+    const tex = this.makeTexture(canvas);
+    this.cache.set('gravel', tex);
+    return tex;
+  }
+
+  // Iron ore: stone with rusty orange flecks
+  static getIronOre(): THREE.CanvasTexture {
+    if (this.cache.has('iron_ore')) return this.cache.get('iron_ore')!;
+    const [canvas, ctx] = this.createPixelCanvas(16);
+    for (let x = 0; x < 16; x++) {
+      for (let y = 0; y < 16; y++) {
+        const val = Math.floor(115 + (Math.random() - 0.5) * 40);
+        ctx.fillStyle = `rgb(${val},${val},${val})`;
+        ctx.fillRect(x, y, 1, 1);
+      }
+    }
+    for (let i = 0; i < 7; i++) {
+      const x = 1 + Math.floor(Math.random() * 13);
+      const y = 1 + Math.floor(Math.random() * 13);
+      ctx.fillStyle = '#d8945a';
+      ctx.fillRect(x, y, 2, 2);
+      ctx.fillStyle = '#a8603a';
+      ctx.fillRect(x + 1, y + 1, 1, 1);
+    }
+    const tex = this.makeTexture(canvas);
+    this.cache.set('iron_ore', tex);
+    return tex;
+  }
+
   // Wood Planks
   static getWoodPlanks(): THREE.CanvasTexture {
     if (this.cache.has('wood_planks')) return this.cache.get('wood_planks')!;

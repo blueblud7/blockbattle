@@ -33,13 +33,13 @@ function minutesBucket(ms: number): string {
 
 export function trackMatchStart(isRestart: boolean) {
   matchStartedAt = performance.now();
-  track(isRestart ? 'match-restart' : 'match-start', isRestart ? '다시 플레이' : '게임 시작');
+  track(isRestart ? 'match-restart' : 'match-start', isRestart ? 'Restart' : 'Start');
 }
 
 export function trackMatchEnd(result: 'win' | 'death' | 'zone', rank: number, kills: number) {
   const dur = matchStartedAt ? performance.now() - matchStartedAt : 0;
-  track(`match-end/${result}`, result === 'win' ? '승리' : result === 'zone' ? '자기장 사망' : '교전 사망');
-  track(`match-time/${minutesBucket(dur)}`, `판 길이 ${minutesBucket(dur)}`);
-  track(`match-rank/${rank <= 1 ? '1' : rank <= 5 ? '2-5' : rank <= 10 ? '6-10' : '11-20'}`, '최종 순위');
-  track(`match-kills/${kills >= 5 ? '5+' : kills}`, '킬 수');
+  track(`match-end/${result}`, result === 'win' ? 'Win' : result === 'zone' ? 'Died to zone' : 'Killed');
+  track(`match-time/${minutesBucket(dur)}`, `Match length ${minutesBucket(dur)}`);
+  track(`match-rank/${rank <= 1 ? '1' : rank <= 5 ? '2-5' : rank <= 10 ? '6-10' : '11-20'}`, 'Final rank');
+  track(`match-kills/${kills >= 5 ? '5+' : kills}`, 'Kills');
 }

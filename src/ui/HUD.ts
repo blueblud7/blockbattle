@@ -3,6 +3,9 @@ import { Player } from '../entities/Player';
 import { ZoneManager } from '../zone/ZoneManager';
 import { World } from '../world/World';
 import { Bot } from '../entities/Bot';
+import { itemName } from '../world/World';
+import { RESOURCE_ICONS, ResourceType } from '../weapons/Weapon';
+import { t } from '../i18n';
 
 export class HUD {
   player: Player;
@@ -30,6 +33,8 @@ export class HUD {
   killfeedEl: HTMLElement;
   dropPromptEl: HTMLElement;
   blockInfoEl: HTMLElement;
+  resBarEl: HTMLElement;
+  private lastResText = '';
 
   constructor(player: Player, zone: ZoneManager, world: World) {
     this.player = player;
@@ -57,6 +62,7 @@ export class HUD {
     this.killfeedEl = document.getElementById('killfeed')!;
     this.dropPromptEl = document.getElementById('drop-prompt')!;
     this.blockInfoEl = document.getElementById('block-info')!;
+    this.resBarEl = document.getElementById('res-bar')!;
   }
 
   update(aliveCount: number, bots: Bot[]) {
@@ -176,16 +182,17 @@ export class HUD {
       const iconEl = slot.querySelector('.slot-icon');
 
       if (slotNum === 1) {
-        if (nameEl) nameEl.textContent = '곡괭이';
+        const pick = this.player.weapons.weapons.get('PICKAXE')!;
+        if (nameEl) nameEl.textContent = pick.name;
       } else if (slotNum === 2) {
         const s2 = this.player.weapons.slot2Weapon;
         if (s2) {
           const w = this.player.weapons.weapons.get(s2)!;
-          if (nameEl) nameEl.textContent = w.name.split(' ')[1] || w.name;
+          if (nameEl) nameEl.textContent = w.name;
           if (iconEl) iconEl.textContent = w.icon;
           if (countEl) countEl.textContent = `${w.currentAmmo}`;
         } else {
-          if (nameEl) nameEl.textContent = '빈 슬롯';
+          if (nameEl) nameEl.textContent = t('hud.empty');
           if (iconEl) iconEl.textContent = '🔫';
           if (countEl) countEl.textContent = '-';
         }
@@ -193,11 +200,11 @@ export class HUD {
         const s3 = this.player.weapons.slot3Weapon;
         if (s3) {
           const w = this.player.weapons.weapons.get(s3)!;
-          if (nameEl) nameEl.textContent = w.name.split(' ')[1] || w.name;
+          if (nameEl) nameEl.textContent = w.name;
           if (iconEl) iconEl.textContent = w.icon;
           if (countEl) countEl.textContent = `${w.currentAmmo}`;
         } else {
-          if (nameEl) nameEl.textContent = '빈 슬롯';
+          if (nameEl) nameEl.textContent = t('hud.empty');
           if (iconEl) iconEl.textContent = '🎯';
           if (countEl) countEl.textContent = '-';
         }
@@ -207,6 +214,10 @@ export class HUD {
       } else if (slotNum === 5) {
         const block = this.player.weapons.weapons.get('BLOCK')!;
         if (countEl) countEl.textContent = `${block.currentAmmo}`;
+      } else if (slotNum === 6) {
+        const nade = this.player.weapons.weapons.get('GRENADE')!;
+        if (countEl) countEl.textContent = `${nade.currentAmmo}`;
+        slot.classList.toggle('dim', nade.currentAmmo <= 0);
       }
     });
 
@@ -217,20 +228,24 @@ export class HUD {
       this.currentAmmoEl.textContent = `${active.currentAmmo}`;
       this.reserveAmmoEl.textContent = `/ ${active.reserveAmmo}`;
       const scope = active.scope ?? 1;
-      this.fireModeEl.textContent = (active.automatic ? '⚡ 완전 연사' : '단발 사격') +
-        (scope > 1 ? ` · 🔭 ${scope}배율` : ' · 기본 조준');
-    } else if (active.type === 'MEDKIT') {
+      this.fireModeEl.textContent = (active.automatic ? t('hud.auto') : t('hud.semi')) +
+        (scope > 1 ? t('hud.scope', { n: scope }) : t('hud.iron'));
+    } else if (active.type === 'MEDKIT' || active.type === 'BLOCK' || active.type === 'GRENADE') {
       this.currentAmmoEl.textContent = `${active.currentAmmo}`;
-      this.reserveAmmoEl.textContent = `개 남음`;
-      this.fireModeEl.textContent = '클릭하여 체력 75 즉시 회복';
-    } else if (active.type === 'BLOCK') {
-      this.currentAmmoEl.textContent = `${active.currentAmmo}`;
-      this.reserveAmmoEl.textContent = `개 남음`;
-      this.fireModeEl.textContent = '엄폐물 / 계단 건축 모드';
+      this.reserveAmmoEl.textContent = t('hud.left');
+      this.fireModeEl.textContent = t(active.type === 'MEDKIT' ? 'hud.medkitUse' : active.type === 'BLOCK' ? 'hud.blockUse' : 'hud.grenadeUse');
     } else {
       this.currentAmmoEl.textContent = '∞';
       this.reserveAmmoEl.textContent = '/ ∞';
-      this.fireModeEl.textContent = '채굴 / 근접 타격';
+      this.fireModeEl.textContent = t('hud.melee');
+    }
+
+    // Gathered resources
+    const res = this.player.weapons.resources;
+    const resText = (['wood', 'stone', 'iron', 'fiber'] as ResourceType[]).map(r => `${RESOURCE_ICONS[r]} ${res[r]}`).join('   ') + '   [Q] 🛠️';
+    if (resText !== this.lastResText) {
+      this.resBarEl.textContent = resText;
+      this.lastResText = resText;
     }
 
     // Stance
@@ -258,27 +273,27 @@ export class HUD {
   private updateDropPrompt() {
     if (this.player.inPlane) {
       this.dropPromptEl.style.display = 'block';
-      this.dropPromptEl.textContent = '✈️ C-130 수송기 비행 중... [SPACE] 또는 [F] 키로 전장 강하!';
+      this.dropPromptEl.textContent = t('hud.plane');
     } else if (this.player.isAirborne) {
       this.dropPromptEl.style.display = 'block';
       if (this.player.isParachuteOpen) {
-        this.dropPromptEl.textContent = '🪂 낙하산 활강 중... (WASD로 착륙 지점 유도)';
+        this.dropPromptEl.textContent = t('hud.chute');
       } else {
-        this.dropPromptEl.textContent = '🪂 자유 낙하 중! [SPACE] 눌러 낙하산 펼치기';
+        this.dropPromptEl.textContent = t('hud.freefall');
       }
     } else {
       // Check if near any loot item on ground
       let nearLootName: string | null = null;
       for (const item of this.world.groundItems) {
         if (!item.picked && this.player.position.distanceTo(item.position) < 3.0) {
-          nearLootName = item.name;
+          nearLootName = itemName(item.type);
           break;
         }
       }
       if (!nearLootName) {
         for (const dc of this.world.deathCrates) {
           if (!dc.opened && this.player.position.distanceTo(dc.position) < 3.2) {
-            nearLootName = `[${dc.victimName}] 전리품 상자`;
+            nearLootName = t('hud.deathCrate', { name: dc.victimName });
             break;
           }
         }
@@ -286,7 +301,7 @@ export class HUD {
       if (!nearLootName) {
         for (const c of this.world.crates) {
           if (!c.opened && this.player.position.distanceTo(c.position) < 3.2) {
-            nearLootName = '보급 상자';
+            nearLootName = t('hud.supplyCrate');
             break;
           }
         }
@@ -294,13 +309,13 @@ export class HUD {
 
       if (nearLootName) {
         this.dropPromptEl.style.display = 'block';
-        this.dropPromptEl.textContent = `📦 ${nearLootName} [E] 또는 [F] 키로 파밍!`;
+        this.dropPromptEl.textContent = t('hud.lootPrompt', { name: nearLootName });
       } else if (this.player.isInWater) {
         this.dropPromptEl.style.display = 'block';
-        this.dropPromptEl.textContent = '🏊 수영 중... [SPACE] 수면 상승 / 해변으로 나가기';
+        this.dropPromptEl.textContent = t('hud.swimming');
       } else if (!this.player.weapons.slot2Weapon && !this.player.weapons.slot3Weapon) {
         this.dropPromptEl.style.display = 'block';
-        this.dropPromptEl.textContent = '💡 건물 내부 빛기둥(총기)이나 상자(📦)로 가세요! (가까이 가면 자동 획득)';
+        this.dropPromptEl.textContent = t('hud.findGun');
       } else {
         this.dropPromptEl.style.display = 'none';
       }

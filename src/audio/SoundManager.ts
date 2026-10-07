@@ -132,6 +132,52 @@ export class SoundManager {
     this.playNoiseSnap(0.4, 0.7);
   }
 
+  /** Gunshot for any gun type. */
+  playGun(type: string) {
+    if (type === 'PISTOL' || type === 'SMG') this.playPistol();
+    else if (type === 'SHOTGUN') this.playShotgun();
+    else if (type === 'SNIPER' || type === 'DMR') this.playSniper();
+    else if (type === 'CROSSBOW') this.playCrossbow();
+    else this.playRifle();
+  }
+
+  // Crossbow: a quiet string twang
+  playCrossbow() {
+    this.initCtx();
+    if (!this.ctx || this.isMuted) return;
+    const t = this.ctx.currentTime;
+    const osc = this.ctx.createOscillator();
+    const gain = this.ctx.createGain();
+    osc.type = 'triangle';
+    osc.frequency.setValueAtTime(320, t);
+    osc.frequency.exponentialRampToValueAtTime(120, t + 0.15);
+    gain.gain.setValueAtTime(0.25, t);
+    gain.gain.exponentialRampToValueAtTime(0.001, t + 0.18);
+    osc.connect(gain);
+    gain.connect(this.ctx.destination);
+    osc.start(t);
+    osc.stop(t + 0.2);
+  }
+
+  // Grenade explosion: low boom + long noise burst, quieter with distance
+  playExplosion(volume: number = 1) {
+    this.initCtx();
+    if (!this.ctx || this.isMuted || volume <= 0.02) return;
+    const t = this.ctx.currentTime;
+    const osc = this.ctx.createOscillator();
+    const gain = this.ctx.createGain();
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(90, t);
+    osc.frequency.exponentialRampToValueAtTime(25, t + 0.7);
+    gain.gain.setValueAtTime(0.9 * volume, t);
+    gain.gain.exponentialRampToValueAtTime(0.001, t + 0.8);
+    osc.connect(gain);
+    gain.connect(this.ctx.destination);
+    osc.start(t);
+    osc.stop(t + 0.8);
+    this.playNoiseSnap(0.7, 0.8 * volume);
+  }
+
   private playNoiseSnap(duration: number, volume: number) {
     if (!this.ctx) return;
     const t = this.ctx.currentTime;

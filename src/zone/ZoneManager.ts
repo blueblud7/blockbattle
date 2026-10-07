@@ -1,3 +1,4 @@
+import { t } from '../i18n';
 import * as THREE from 'three';
 import { sounds } from '../audio/SoundManager';
 
@@ -187,12 +188,12 @@ export class ZoneManager {
 
     if (this.isWaiting) {
       return {
-        text: `${phaseNum}페이즈 자기장 축소 대기: ${sec}초`,
+        text: t('hud.zoneWait', { p: phaseNum, s: sec }),
         isDanger: false
       };
     } else {
       return {
-        text: `⚠️ ${phaseNum}페이즈 자기장 축소 중! (${sec}초 남음)`,
+        text: t('hud.zoneShrink', { p: phaseNum, s: sec }),
         isDanger: true
       };
     }

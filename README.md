@@ -1,76 +1,59 @@
-# 🎮 BlockBattle (블록 배틀로얄)
+# 🎮 BlockBattle
 
-**복셀(블록) 월드 & 건축/파괴 시스템**과 **20인 배틀로얄 시스템(공중 낙하, 상자 파밍, 수축하는 자기장, 생존 경쟁)**을 결합한 3D 웹 게임입니다. 설치 없이 브라우저에서 바로 플레이할 수 있습니다.
+A **voxel battle royale** in the browser: 20 players (you + 19 bots) drop onto a block island, loot villages, **mine resources and craft gear**, and fight inside a shrinking zone. No install needed.
+
+👉 **Play: [https://blueblud7.github.io/blockbattle/](https://blueblud7.github.io/blockbattle/)**
+
+Desktop Chrome / Edge / Firefox / Safari with keyboard + mouse (no mobile). English by default, 한국어 available on the start screen.
 
 ---
 
-## 🚀 바로 플레이
+## 🕹️ Controls
 
-👉 **[https://blueblud7.github.io/blockbattle/](https://blueblud7.github.io/blockbattle/)**
+| Key | Action |
+| :--- | :--- |
+| **W A S D** | Move (glide while parachuting) |
+| **SPACE** | Jump / open parachute |
+| **SHIFT** | Sprint |
+| **C / Z** | Crouch / go prone (press again or SPACE to stand). Lower = slower, steadier aim, harder to spot and hit |
+| **Mouse** | Look |
+| **Left click** | Fire / melee / mine blocks |
+| **Right click** | Aim (zooms by the mounted scope) / place block |
+| **1 ~ 6 / wheel** | Switch slots (pickaxe, 2 guns, medkit, blocks, grenades) |
+| **R** | Reload |
+| **E or F** | Open crates & pick up items |
+| **G** | Grenade |
+| **Q** | Crafting menu |
 
-PC 크롬/엣지/웨일 등 최신 브라우저에서 키보드 + 마우스로 플레이하세요. (모바일 미지원)
+## ⚔️ Features
 
-### 로컬에서 실행
+- **Villages are the loot hubs** — 11 villages with street grids and gravel roads between them; houses hold guns, ammo, meds, grenades and scopes on both floors, plus loose loot in the streets.
+- **Guns** — Pistol, Shotgun, SMG, Assault Rifle, Light Machine Gun, Marksman Rifle, Sniper Rifle, Crossbow.
+- **Scopes** — 2x / 4x / 8x, auto-mounted on a gun that takes them:
+
+  | Gun | Base | Max |
+  | :--- | :--- | :--- |
+  | Pistol · Shotgun · SMG | 1x | 2x |
+  | Assault Rifle · LMG · Crossbow | 1x | 4x |
+  | Marksman Rifle | 1x | 8x |
+  | Sniper Rifle | 2x | 8x |
+
+- **Mining & crafting (Minecraft-style)** — the pickaxe gives building blocks plus resources: 🪵 wood (trees, planks), 🪨 stone (rocks, gravel), ⛓️ iron (rusty ore in boulders and underground), 🌿 fiber (leaves). Press **Q** to craft blocks, medkits, ammo, grenades, an iron pickaxe, armor, a crossbow, a pistol, an SMG or a 2x scope.
+- **Grenades** — bounce, explode after 2.5 s, hurt everyone nearby and blow holes in walls.
+- **Shrinking zone**, cargo-plane drop, AI bots that loot and fight, kill feed, victory screen.
+
+## 🛠️ Local development
 
 ```bash
 npm install
 npm run dev      # http://localhost:5173
-npm run build    # dist/ 에 배포용 정적 파일 생성
+npm run build    # static files in dist/
 ```
 
-`main` 브랜치에 push하면 GitHub Actions가 자동으로 빌드해 GitHub Pages에 배포합니다.
+Pushing to `main` builds and deploys to GitHub Pages via GitHub Actions.
 
 ---
 
-## 🕹️ 조작법 안내
+### 한국어
 
-| 입력 키 | 기능 |
-| :--- | :--- |
-| **W, A, S, D** | 이동 (공중 활공 및 지상 이동) |
-| **SPACE** | 점프 / 공중에서 낙하산 펼치기 |
-| **SHIFT** | 전력 질주 (달리기) |
-| **C / Z** | 앉기 / 엎드리기 (다시 누르거나 SPACE로 일어서기). 자세가 낮을수록 느리지만 명중률↑, 적에게 덜 보이고 덜 맞음 |
-| **마우스 이동** | 시점 회전 (FPS 시점) |
-| **마우스 좌클릭** | 사격 / 근접 공격 / 블록 파괴 |
-| **마우스 우클릭** | 조준. 장착한 스코프 배율(2x·4x·8x)만큼 확대 / 블록 설치 (5번 슬롯: 좌클릭도 설치) |
-| **1 ~ 5 / 마우스 휠** | 슬롯 무기 및 아이템 교체 |
-| **R** | 총기 재장전 |
-| **E 또는 F** | 보급 상자 열기 & 아이템 파밍 |
-
-### 🔭 스코프
-
-건물·감시탑·보급상자에서 2배 / 4배 / 8배 스코프를 주울 수 있고, 주우면 맞는 총에 자동 장착됩니다.
-
-| 총 | 기본 | 최대 장착 |
-| :--- | :--- | :--- |
-| 권총 · 샷건 | 1x (기본 조준) | 2x |
-| 돌격소총 | 1x | 4x |
-| 저격소총 | 2x | 8x |
-
----
-
-## ⚔️ 주요 게임 특징
-
-1. **20인 실시간 배틀로얄 (1 플레이어 vs 19 AI 봇)**
-   - 공중 수송기에서 낙하하여 원하는 위치로 활공 낙하산 강하
-   - 적 AI 봇들도 각자 파밍하고, 자기장을 피해 이동하며 총격전 수행
-   - 실시간 킬로그(`[블록장인] ➔ [모래성] (저격소총)`) 및 생존자 카운트
-
-2. **다양한 무기 및 보급 아이템**
-   - ⛏️ **곡괭이**: 지형 블록 채굴 및 근접 타격
-   - 🔫 **P92 권총**: 기본 반자동 권총
-   - 💥 **S1897 샷건**: 근거리 막강한 산탄 화력
-   - ⚡ **돌격소총**: 빠른 연사력과 중거리 화력 (최대 4배 스코프)
-   - 🎯 **저격소총**: 초강력 장거리 저격 (기본 2배, 최대 8배 스코프)
-   - 🩹 **구급키트**: 체력 즉시 대량 회복
-   - 🛡️ **방탄 아머**: 피해량 감소
-   - 🧱 **건축 블록**: 엄폐물 및 계단 타워 즉석 건축
-   - 🔭 **스코프 (2x / 4x / 8x)**: 주우면 맞는 총에 자동 장착
-
-3. **수축하는 자기장 (블루존) 시스템**
-   - 1페이즈 ~ 최종 페이즈까지 단계별로 축소되는 3D 포스필드
-   - 안전 구역(화이트 링)으로 이동하지 않으면 자기장 피해(DPS) 지속 발생
-   - 미니맵 및 상단 나침반 테이프에 실시간 위치 표시
-
-4. **1등 달성 시 승리 세레모니**
-   - 최후의 1인 생존 시 **"최후의 생존자! 승리했습니다!"** 승리 화면 및 승리 팡파르 효과음 출력
+블록으로 된 섬에서 펼쳐지는 20인 배틀로얄입니다. 마을에서 파밍하고, 곡괭이로 자원을 캐서 **[Q] 제작 메뉴**로 장비를 만들고, 자기장을 피해 최후의 1인이 되세요. 시작 화면에서 **한국어**를 선택할 수 있습니다.

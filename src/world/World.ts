@@ -1,9 +1,21 @@
 import * as THREE from 'three';
 import { TextureGenerator } from '../textures/TextureGenerator';
 import { sounds } from '../audio/SoundManager';
+import { t } from '../i18n';
 
-export type LootItemType = 'PISTOL' | 'SHOTGUN' | 'RIFLE' | 'SNIPER' | 'MEDKIT' | 'ARMOR' | 'AMMO' | ScopeItemType;
+export type GunType = 'PISTOL' | 'SHOTGUN' | 'SMG' | 'RIFLE' | 'LMG' | 'DMR' | 'SNIPER' | 'CROSSBOW';
+export const GUN_TYPES: GunType[] = ['PISTOL', 'SHOTGUN', 'SMG', 'RIFLE', 'LMG', 'DMR', 'SNIPER', 'CROSSBOW'];
+export function isGun(type: string): type is GunType {
+  return (GUN_TYPES as string[]).includes(type);
+}
+
+export type LootItemType = GunType | 'MEDKIT' | 'ARMOR' | 'AMMO' | 'GRENADE' | ScopeItemType;
 export type ScopeItemType = 'SCOPE2' | 'SCOPE4' | 'SCOPE8';
+
+/** Display name of a loot item in the current language. */
+export function itemName(type: string): string {
+  return isGun(type) || type === 'MEDKIT' ? t(`w.${type}`) : t(`i.${type}`);
+}
 
 export const SCOPE_LEVEL: { [key in ScopeItemType]: number } = { SCOPE2: 2, SCOPE4: 4, SCOPE8: 8 };
 export function isScope(type: string): type is ScopeItemType {
@@ -13,7 +25,6 @@ export function isScope(type: string): type is ScopeItemType {
 export interface GroundItem {
   id: number;
   type: LootItemType;
-  name: string;
   mesh: THREE.Group;
   position: THREE.Vector3;
   baseY: number;
@@ -38,7 +49,7 @@ export interface LootCrate {
   mesh: THREE.Mesh;
   position: THREE.Vector3;
   opened: boolean;
-  lootType: 'PISTOL' | 'SHOTGUN' | 'RIFLE' | 'SNIPER' | 'MEDKIT' | 'ARMOR' | ScopeItemType;
+  lootType: LootItemType;
 }
 
 type StructureType = 'house' | 'barracks' | 'warehouse' | 'watchtower';
@@ -77,7 +88,39 @@ const TILE_PLANK = 4;
 const TILE_LOG = 5;
 const TILE_LEAVES = 6;
 const TILE_SAND = 7;
-const ATLAS_TILES = 8;
+const TILE_GRAVEL = 8;
+const TILE_IRON_ORE = 9;
+const ATLAS_TILES = 10;
+
+// Villages are the main loot hubs: flattened sites with a street grid, joined by gravel roads
+interface Town {
+  x: number;
+  z: number;
+  r: number;
+  military?: boolean;
+}
+const TOWNS: Town[] = [
+  { x: 0, z: 0, r: 30, military: true }, // central military compound
+  { x: 5, z: 168, r: 40 },               // north coast town
+  { x: 35, z: -170, r: 34 },             // southern island village
+  { x: 146, z: 25, r: 36 },              // east town
+  { x: -155, z: -40, r: 38 },            // west town
+  { x: 120, z: 135, r: 24 },             // northeast hill village
+  { x: -80, z: 128, r: 26 },             // northwest village past the lake
+  { x: 45, z: 75, r: 26 },               // foothills village below the peak
+  { x: -95, z: -175, r: 28 },            // southwest village
+  { x: 70, z: -60, r: 22 },              // mid-island hamlets
+  { x: -70, z: 20, r: 22 }
+];
+
+const HOUSE_GUNS: LootItemType[] = ['PISTOL', 'PISTOL', 'SHOTGUN', 'SMG', 'SMG', 'RIFLE', 'CROSSBOW'];
+const UPPER_LOOT: LootItemType[] = ['RIFLE', 'DMR', 'SNIPER', 'LMG', 'MEDKIT', 'ARMOR', 'SMG'];
+const MILITARY_GUNS: LootItemType[] = ['RIFLE', 'RIFLE', 'LMG', 'DMR', 'SMG'];
+const CONSUMABLES: LootItemType[] = ['MEDKIT', 'GRENADE', 'ARMOR', 'AMMO'];
+
+function pick<T>(arr: T[]): T {
+  return arr[Math.floor(Math.random() * arr.length)];
+}
 
 export class World {
   scene: THREE.Scene;
@@ -107,6 +150,7 @@ export class World {
   private nextItemId: number = 0;
   private structures: StructurePlan[] = [];
   private reserved: Uint8Array; // columns reserved for structures (no trees)
+  private road: Uint8Array;     // gravel road / street columns
 
   // Block types
   static readonly BLOCK_AIR = 0;
@@ -118,6 +162,8 @@ export class World {
   static readonly BLOCK_LEAVES = 6;
   static readonly BLOCK_SAND = 7;
   static readonly BLOCK_WATER = 8;
+  static readonly BLOCK_GRAVEL = 9;
+  static readonly BLOCK_IRON_ORE = 10;
   static readonly WATER_LEVEL = 4.5;
 
   constructor(scene: THREE.Scene) {
@@ -127,6 +173,7 @@ export class World {
     this.grid = new Uint8Array(this.gridSize * this.gridSize * World.MAX_HEIGHT);
     this.heightMap = new Int16Array(this.gridSize * this.gridSize);
     this.reserved = new Uint8Array(this.gridSize * this.gridSize);
+    this.road = new Uint8Array(this.gridSize * this.gridSize);
     this.coastDist = new Float32Array(this.gridSize * this.gridSize);
 
     this.initMaterials();
@@ -138,7 +185,9 @@ export class World {
     this.buildBridges();
     this.spawnTrees();
     this.spawnDocks();
+    this.spawnBoulders();
     this.spawnLootCrates();
+    this.spawnStreetLoot();
 
     this.initialGrid = this.grid.slice();
     this.rebuildAllChunks();
@@ -155,7 +204,9 @@ export class World {
       TextureGenerator.getWoodPlanks(),
       TextureGenerator.getWoodLog(),
       TextureGenerator.getLeaves(),
-      TextureGenerator.getSand()
+      TextureGenerator.getSand(),
+      TextureGenerator.getGravel(),
+      TextureGenerator.getIronOre()
     ];
     const canvas = document.createElement('canvas');
     canvas.width = 16 * ATLAS_TILES;
@@ -554,12 +605,13 @@ export class World {
         const ci = this.colIndex(x, z);
         const height = this.heightMap[ci];
         const isShore = this.coastDist[ci] < 7;
+        const isRoad = this.road[ci] === 1 && height >= 4;
         const base = ci * H;
         for (let y = 0; y <= height; y++) {
           let type: number;
-          if (y === height) type = isShore ? World.BLOCK_SAND : World.BLOCK_GRASS;
+          if (y === height) type = isRoad ? World.BLOCK_GRAVEL : isShore ? World.BLOCK_SAND : World.BLOCK_GRASS;
           else if (y >= height - 3) type = isShore ? World.BLOCK_SAND : World.BLOCK_DIRT;
-          else type = World.BLOCK_STONE;
+          else type = Math.random() < 0.04 ? World.BLOCK_IRON_ORE : World.BLOCK_STONE;
           this.grid[base + y] = type;
         }
       }
@@ -574,12 +626,48 @@ export class World {
         const tx = x + Math.floor(Math.random() * 3) - 1;
         const tz = z + Math.floor(Math.random() * 3) - 1;
         if (this.isReservedNear(tx, tz, 3)) continue;
+        if (this.isRoadNear(tx, tz, 2) || TOWNS.some(tw => Math.hypot(tw.x - tx, tw.z - tz) < tw.r + 4)) continue;
         const h = this.h(tx, tz);
         if (!this.inBounds(tx, tz) || this.coastDist[this.colIndex(tx, tz)] < 9) continue;
         if (h >= 5 && h < 50 && this.getBlock(tx, h, tz) === World.BLOCK_GRASS) {
           this.spawnTree(tx, h + 1, tz);
         }
       }
+    }
+  }
+
+  private isRoadNear(x: number, z: number, r: number): boolean {
+    for (let dx = -r; dx <= r; dx++) {
+      for (let dz = -r; dz <= r; dz++) {
+        if (this.inBounds(x + dx, z + dz) && this.road[this.colIndex(x + dx, z + dz)]) return true;
+      }
+    }
+    return false;
+  }
+
+  // Rocky outcrops: the main source of stone and iron ore above ground
+  private spawnBoulders() {
+    let placed = 0;
+    for (let tries = 0; tries < 4000 && placed < 170; tries++) {
+      const x = Math.floor((Math.random() * 2 - 1) * this.half * 0.9);
+      const z = Math.floor((Math.random() * 2 - 1) * this.half * 0.9);
+      if (!this.inBounds(x, z) || this.coastDist[this.colIndex(x, z)] < 8) continue;
+      if (this.isReservedNear(x, z, 4) || this.isRoadNear(x, z, 3)) continue;
+      if (TOWNS.some(tw => Math.hypot(tw.x - x, tw.z - z) < tw.r + 3)) continue;
+      const r = 1.3 + Math.random() * 1.4;
+      const ri = Math.ceil(r);
+      const oreChance = 0.22 + Math.random() * 0.18;
+      for (let dx = -ri; dx <= ri; dx++) {
+        for (let dz = -ri; dz <= ri; dz++) {
+          const ground = this.h(x + dx, z + dz);
+          for (let dy = 0; dy <= ri; dy++) {
+            if (Math.hypot(dx, dy * 1.2, dz) > r) continue;
+            const type = Math.random() < oreChance ? World.BLOCK_IRON_ORE : World.BLOCK_STONE;
+            this.setBlock(x + dx, ground + 1 + dy, z + dz, type);
+          }
+        }
+      }
+      placed++;
     }
   }
 
@@ -636,7 +724,7 @@ export class World {
       this.setBlock(endX, 4, endZ, World.BLOCK_WOOD_PLANK);
       this.setBlock(endX + loc.dx, 3, endZ + loc.dz, World.BLOCK_WOOD_PLANK);
 
-      const gunTypes: LootItemType[] = ['RIFLE', 'SHOTGUN', 'PISTOL', 'SNIPER'];
+      const gunTypes: LootItemType[] = ['RIFLE', 'SHOTGUN', 'PISTOL', 'SMG', 'DMR', 'SNIPER', 'LMG', 'PISTOL'];
       this.spawnGroundItem(loc.x + loc.dx * 3, 6.2, loc.z + loc.dz * 3, gunTypes[idx % gunTypes.length], 45);
       this.spawnGroundItem(loc.x + loc.dx * 8, 6.2, loc.z + loc.dz * 8, 'MEDKIT', 1);
     });
@@ -666,76 +754,15 @@ export class World {
   // ---------- Structures ----------
 
   private planStructures() {
-    // Hand-placed towns (coordinates spread out for the larger island)
-    const named: { x: number; z: number; type: StructureType }[] = [
-      // Central military compound
-      { x: 0, z: 0, type: 'warehouse' },
-      { x: 22, z: 10, type: 'barracks' },
-      { x: -22, z: -10, type: 'barracks' },
-      { x: 18, z: 26, type: 'watchtower' },
-      { x: -20, z: -28, type: 'watchtower' },
+    this.flattenTowns();
+    const candidates = this.layoutTowns();
+    this.planRoads();
 
-      // North coastal town
-      { x: 0, z: 160, type: 'house' },
-      { x: 16, z: 162, type: 'house' },
-      { x: -16, z: 164, type: 'house' },
-      { x: 4, z: 178, type: 'watchtower' },
-      { x: 30, z: 172, type: 'warehouse' },
-      { x: -30, z: 150, type: 'house' },
-
-      // South foothills village
-      { x: 40, z: -150, type: 'house' },
-      { x: 58, z: -145, type: 'house' },
-      { x: 22, z: -158, type: 'house' },
-      { x: 44, z: -175, type: 'watchtower' },
-      { x: -10, z: -165, type: 'warehouse' },
-
-      // East mountain station
-      { x: 150, z: 30, type: 'barracks' },
-      { x: 170, z: 50, type: 'watchtower' },
-      { x: 135, z: 60, type: 'house' },
-      { x: 160, z: 10, type: 'house' },
-
-      // West desert base
-      { x: -150, z: -30, type: 'barracks' },
-      { x: -172, z: -10, type: 'watchtower' },
-      { x: -135, z: -55, type: 'house' },
-      { x: -160, z: -60, type: 'warehouse' },
-
-      // Northeast summit ruins
-      { x: 110, z: 125, type: 'barracks' },
-      { x: 135, z: 140, type: 'watchtower' },
-
-      // Northwest lakeside outpost
-      { x: -115, z: 115, type: 'house' },
-      { x: -100, z: 130, type: 'house' },
-      { x: -140, z: 135, type: 'watchtower' },
-
-      // Southeast fort
-      { x: 125, z: -115, type: 'house' },
-      { x: 110, z: -135, type: 'barracks' },
-      { x: 150, z: -135, type: 'watchtower' },
-
-      // Southwest outpost
-      { x: -120, z: -125, type: 'house' },
-      { x: -145, z: -140, type: 'watchtower' },
-
-      // Mid-island cabins
-      { x: 65, z: 65, type: 'house' },
-      { x: -70, z: 60, type: 'house' },
-      { x: 60, z: -80, type: 'house' },
-      { x: -70, z: -70, type: 'house' },
-      { x: 95, z: -25, type: 'watchtower' },
-      { x: -95, z: 25, type: 'watchtower' }
-    ];
-
-    const candidates = [...named];
-
-    // Scatter extra cabins/towers across the island so the bigger map isn't empty
-    const extraTypes: StructureType[] = ['house', 'house', 'house', 'watchtower', 'barracks'];
+    // A few lone cabins/towers between the villages
+    const extraTypes: StructureType[] = ['house', 'house', 'watchtower', 'house', 'barracks'];
     let attempts = 0;
     let added = 0;
-    while (added < 28 && attempts < 600) {
+    while (added < 16 && attempts < 600) {
       attempts++;
       const angle = Math.random() * Math.PI * 2;
       const dist = 30 + Math.random() * (this.half * 0.82);
@@ -743,6 +770,7 @@ export class World {
       const z = Math.round(Math.sin(angle) * dist);
       if (this.coastDist[this.colIndex(x, z)] < 8) continue;
       if (candidates.some(c => Math.hypot(c.x - x, c.z - z) < 30)) continue;
+      if (TOWNS.some(tw => Math.hypot(tw.x - x, tw.z - z) < tw.r + 20)) continue;
       candidates.push({ x, z, type: extraTypes[added % extraTypes.length] });
       added++;
     }
@@ -803,9 +831,144 @@ export class World {
         if (!this.inBounds(cx, cz)) return false;
         const ci = this.colIndex(cx, cz);
         if (this.reserved[ci] || this.coastDist[ci] < 3) return false;
+        // Streets may run right past the walls, but not through the building
+        const inside = cx >= x + fp.x0 && cx <= x + fp.x1 && cz >= z + fp.z0 && cz <= z + fp.z1;
+        if (inside && this.road[ci]) return false;
       }
     }
     return true;
+  }
+
+  // Level each village site toward its median height, blending into the hills around it
+  private flattenTowns() {
+    const blendW = 18;
+    for (const town of TOWNS) {
+      const samples: number[] = [];
+      for (let x = town.x - town.r; x <= town.x + town.r; x += 2) {
+        for (let z = town.z - town.r; z <= town.z + town.r; z += 2) {
+          if (!this.inBounds(x, z) || Math.hypot(x - town.x, z - town.z) > town.r) continue;
+          const ci = this.colIndex(x, z);
+          if (this.coastDist[ci] >= 3) samples.push(this.heightMap[ci]);
+        }
+      }
+      if (samples.length === 0) continue;
+      samples.sort((a, b) => a - b);
+      const base = Math.max(6, samples[Math.floor(samples.length / 2)]);
+      const R = town.r + blendW;
+      for (let x = town.x - R; x <= town.x + R; x++) {
+        for (let z = town.z - R; z <= town.z + R; z++) {
+          if (!this.inBounds(x, z)) continue;
+          const ci = this.colIndex(x, z);
+          if (this.coastDist[ci] < 3) continue;
+          const d = Math.hypot(x - town.x, z - town.z);
+          if (d > R) continue;
+          let w = d <= town.r ? 1 : 1 - (d - town.r) / blendW;
+          w = w * w * (3 - 2 * w); // smoothstep
+          const h = this.heightMap[ci];
+          this.heightMap[ci] = Math.max(5, Math.round(h + (base - h) * w));
+        }
+      }
+    }
+  }
+
+  // Street grid: buildings on 16x14 lots, 3-wide gravel streets in between
+  private layoutTowns(): { x: number; z: number; type: StructureType }[] {
+    const out: { x: number; z: number; type: StructureType }[] = [];
+    const LX = 18;
+    const LZ = 16;
+    for (const town of TOWNS) {
+      const lots: { gx: number; gz: number }[] = [];
+      const n = Math.ceil(town.r / LZ) + 1;
+      for (let gx = -n; gx <= n; gx++) {
+        for (let gz = -n; gz <= n; gz++) {
+          if (Math.hypot(gx * LX, gz * LZ) > town.r - 2) continue;
+          lots.push({ gx, gz });
+        }
+      }
+
+      // Streets run along the gaps between lots
+      for (let gx = -n; gx <= n + 1; gx++) {
+        const sx = town.x + Math.round((gx - 0.5) * LX);
+        for (let z = town.z - town.r; z <= town.z + town.r; z++) {
+          if (Math.hypot(sx - town.x, z - town.z) <= town.r) this.paintRoad(sx, z, 1);
+        }
+      }
+      for (let gz = -n; gz <= n + 1; gz++) {
+        const sz = town.z + Math.round((gz - 0.5) * LZ);
+        for (let x = town.x - town.r; x <= town.x + town.r; x++) {
+          if (Math.hypot(x - town.x, sz - town.z) <= town.r) this.paintRoad(x, sz, 1);
+        }
+      }
+
+      lots.forEach((lot, i) => {
+        const cx = town.x + lot.gx * LX;
+        const cz = town.z + lot.gz * LZ;
+        let type: StructureType = 'house';
+        if (town.military) {
+          type = i % 3 === 0 ? 'warehouse' : 'barracks';
+        } else if (lot.gx === 0 && lot.gz === 0) {
+          type = 'warehouse';
+        } else if (i % 7 === 3) {
+          type = 'barracks';
+        } else if (Math.random() < 0.12) {
+          return; // the odd empty lot / yard
+        }
+        if (type === 'warehouse') out.push({ x: cx - 6, z: cz - 6, type });
+        else if (type === 'barracks') out.push({ x: cx - 7, z: cz - 3, type });
+        else out.push({ x: cx - 5, z: cz - 4, type });
+      });
+
+      // A lookout tower just outside the village
+      const a = Math.random() * Math.PI * 2;
+      out.push({ x: Math.round(town.x + Math.cos(a) * (town.r + 8)), z: Math.round(town.z + Math.sin(a) * (town.r + 8)), type: 'watchtower' });
+    }
+    return out;
+  }
+
+  private paintRoad(x: number, z: number, halfWidth: number) {
+    for (let dx = -halfWidth; dx <= halfWidth; dx++) {
+      for (let dz = -halfWidth; dz <= halfWidth; dz++) {
+        const px = x + dx;
+        const pz = z + dz;
+        if (!this.inBounds(px, pz)) continue;
+        const ci = this.colIndex(px, pz);
+        if (this.coastDist[ci] >= 2) this.road[ci] = 1;
+      }
+    }
+  }
+
+  // Gravel roads linking every village (minimum spanning tree), gently winding
+  private planRoads() {
+    const linked = [0];
+    const rest = TOWNS.map((_, i) => i).slice(1);
+    while (rest.length > 0) {
+      let best = { a: 0, b: 0, d: Infinity };
+      for (const a of linked) {
+        for (const b of rest) {
+          const d = Math.hypot(TOWNS[a].x - TOWNS[b].x, TOWNS[a].z - TOWNS[b].z);
+          if (d < best.d) best = { a, b, d };
+        }
+      }
+      linked.push(best.b);
+      rest.splice(rest.indexOf(best.b), 1);
+      const A = TOWNS[best.a];
+      const B = TOWNS[best.b];
+      const len = best.d;
+      const px = -(B.z - A.z) / len;
+      const pz = (B.x - A.x) / len;
+      for (let s = 0; s <= len; s += 0.5) {
+        const f = s / len;
+        const wob = Math.sin(f * Math.PI) * Math.sin(f * Math.PI * 3 + best.b) * 10;
+        const x = Math.round(A.x + (B.x - A.x) * f + px * wob);
+        const z = Math.round(A.z + (B.z - A.z) * f + pz * wob);
+        this.paintRoad(x, z, 1);
+      }
+    }
+  }
+
+  /** Village sites, for the zone and anything else that wants to know where people gather. */
+  static get towns(): ReadonlyArray<{ x: number; z: number; r: number }> {
+    return TOWNS;
   }
 
   private findStructureSpot(type: StructureType, x: number, z: number): { x: number; z: number } | null {
@@ -874,13 +1037,14 @@ export class World {
     for (let y = 1; y <= 2; y++) this.setBlock(bx + 7, by + y, bz + 5, World.BLOCK_WOOD_LOG);
     for (let y = 1; y <= 3; y++) this.setBlock(bx + 7, by + y, bz + 4, World.BLOCK_WOOD_LOG);
 
-    const groundLootPool: LootItemType[] = ['PISTOL', 'SHOTGUN', 'RIFLE', 'AMMO'];
-    const type1 = groundLootPool[Math.floor(Math.random() * groundLootPool.length)];
-    this.spawnGroundItem(bx + 3, by + 1.2, bz + 4, type1, 30);
-
-    const upperPool: LootItemType[] = ['RIFLE', 'SNIPER', 'MEDKIT', 'ARMOR'];
-    const type2 = upperPool[Math.floor(Math.random() * upperPool.length)];
-    this.spawnGroundItem(bx + 3, by + h1 + 2.2, bz + 3, type2, 45);
+    // Ground floor: a gun, ammo and maybe a consumable; upstairs: more of the same
+    const up = by + h1 + 2.2;
+    this.spawnGroundItem(bx + 3, by + 1.2, bz + 4, pick(HOUSE_GUNS), 30);
+    this.spawnGroundItem(bx + 2, by + 1.2, bz + 2, 'AMMO', 30 + Math.floor(Math.random() * 30));
+    if (Math.random() < 0.6) this.spawnGroundItem(bx + 5, by + 1.2, bz + 5, pick(CONSUMABLES), 1);
+    this.spawnGroundItem(bx + 3, up, bz + 3, pick(UPPER_LOOT), 45);
+    if (Math.random() < 0.7) this.spawnGroundItem(bx + 2, up, bz + 6, 'AMMO', 40);
+    if (Math.random() < 0.5) this.spawnGroundItem(bx + 5, up, bz + 2, pick(CONSUMABLES), 1);
 
     // Some houses also hide a scope
     if (Math.random() < 0.55) {
@@ -913,8 +1077,11 @@ export class World {
       }
     }
 
-    this.spawnGroundItem(bx + 3, by + 1.2, bz + 3, 'RIFLE', 60);
+    this.spawnGroundItem(bx + 3, by + 1.2, bz + 3, pick(MILITARY_GUNS), 60);
     this.spawnGroundItem(bx + 10, by + 1.2, bz + 3, 'ARMOR', 0);
+    this.spawnGroundItem(bx + 2, by + 1.2, bz + 5, 'AMMO', 60);
+    this.spawnGroundItem(bx + 11, by + 1.2, bz + 5, 'AMMO', 45);
+    if (Math.random() < 0.6) this.spawnGroundItem(bx + 8, by + 1.2, bz + 2, 'GRENADE', 2);
     if (Math.random() < 0.5) this.spawnGroundItem(bx + 6, by + 1.2, bz + 3, Math.random() < 0.6 ? 'SCOPE4' : 'SCOPE2', 0);
   }
 
@@ -945,8 +1112,11 @@ export class World {
     this.setBlock(bx + 3, by + 2, bz + 4, World.BLOCK_WOOD_PLANK);
     this.setBlock(bx + 8, by + 1, bz + 7, World.BLOCK_WOOD_PLANK);
 
-    this.spawnGroundItem(bx + 5, by + 1.2, bz + 6, 'SHOTGUN', 25);
+    this.spawnGroundItem(bx + 5, by + 1.2, bz + 6, pick(['SHOTGUN', 'SMG', 'LMG', 'RIFLE']), 40);
     this.spawnGroundItem(bx + 8, by + 1.2, bz + 4, 'MEDKIT', 2);
+    this.spawnGroundItem(bx + 2, by + 1.2, bz + 9, 'AMMO', 60);
+    this.spawnGroundItem(bx + 9, by + 1.2, bz + 9, pick(['GRENADE', 'ARMOR', 'AMMO']), 2);
+    if (Math.random() < 0.5) this.spawnGroundItem(bx + 6, by + 1.2, bz + 9, pick(['SCOPE2', 'SCOPE4']), 0);
   }
 
   // Watchtower with an external staircase up to the sniper platform
@@ -981,34 +1151,22 @@ export class World {
       }
     }
 
-    this.spawnGroundItem(bx, by + towerH + 1.2, bz, 'SNIPER', 15);
+    this.spawnGroundItem(bx, by + towerH + 1.2, bz, Math.random() < 0.55 ? 'SNIPER' : 'DMR', 20);
+    this.spawnGroundItem(bx - 1, by + towerH + 1.2, bz + 1, 'AMMO', 30);
     if (Math.random() < 0.6) this.spawnGroundItem(bx + 1, by + towerH + 1.2, bz + 1, Math.random() < 0.5 ? 'SCOPE8' : 'SCOPE4', 0);
   }
 
   // ---------- Loot ----------
 
   spawnGroundItem(x: number, y: number, z: number, type: LootItemType, ammoCount: number = 30) {
+    if (type === 'AMMO' && ammoCount < 10) ammoCount = 30;
     const mesh = this.createItemModel(type);
     mesh.position.set(x, y, z);
     this.scene.add(mesh);
 
-    const names: { [key in LootItemType]: string } = {
-      'PISTOL': 'P92 권총',
-      'SHOTGUN': 'S1897 샷건',
-      'RIFLE': '돌격소총',
-      'SNIPER': '저격소총',
-      'MEDKIT': '구급키트',
-      'ARMOR': '방탄 조끼',
-      'AMMO': '탄약 상자',
-      'SCOPE2': '2배율 스코프',
-      'SCOPE4': '4배율 스코프',
-      'SCOPE8': '8배율 스코프'
-    };
-
     const item: GroundItem = {
       id: this.nextItemId++,
       type,
-      name: names[type],
       mesh,
       position: new THREE.Vector3(x, y, z),
       baseY: y,
@@ -1026,8 +1184,13 @@ export class World {
     const ringColors: { [key in LootItemType]: number } = {
       'PISTOL': 0x4ade80,
       'SHOTGUN': 0xf97316,
+      'SMG': 0x2dd4bf,
       'RIFLE': 0x38bdf8,
+      'LMG': 0x60a5fa,
+      'DMR': 0xfbbf24,
       'SNIPER': 0xfacc15,
+      'CROSSBOW': 0xa3e635,
+      'GRENADE': 0x84cc16,
       'MEDKIT': 0xef4444,
       'ARMOR': 0x3b82f6,
       'AMMO': 0xfde047,
@@ -1089,6 +1252,45 @@ export class World {
       scope.rotation.x = Math.PI / 2;
       scope.position.set(0, 0.14, -0.05);
       group.add(body, barrel, scope);
+    } else if (type === 'SMG') {
+      const metal = new THREE.MeshStandardMaterial({ color: 0x1f2937, metalness: 0.8 });
+      const body = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.16, 0.4), metal);
+      const barrel = new THREE.Mesh(new THREE.BoxGeometry(0.07, 0.07, 0.18), metal);
+      barrel.position.set(0, 0.03, -0.28);
+      const mag = new THREE.Mesh(new THREE.BoxGeometry(0.07, 0.28, 0.08), metal);
+      mag.position.set(0, -0.18, -0.02);
+      group.add(body, barrel, mag);
+    } else if (type === 'LMG') {
+      const tan = new THREE.MeshStandardMaterial({ color: 0x57534e, metalness: 0.5 });
+      const metal = new THREE.MeshStandardMaterial({ color: 0x111827, metalness: 0.8 });
+      const body = new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.18, 0.7), tan);
+      const barrel = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.08, 0.5), metal);
+      barrel.position.set(0, 0.03, -0.55);
+      const box = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.18, 0.18), metal);
+      box.position.set(0, -0.16, -0.05);
+      group.add(body, barrel, box);
+    } else if (type === 'DMR') {
+      const tan = new THREE.MeshStandardMaterial({ color: 0x8b6f47 });
+      const metal = new THREE.MeshStandardMaterial({ color: 0x0f172a, metalness: 0.8 });
+      const body = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.16, 0.65), tan);
+      const barrel = new THREE.Mesh(new THREE.BoxGeometry(0.07, 0.07, 0.5), metal);
+      barrel.position.set(0, 0.03, -0.55);
+      const mag = new THREE.Mesh(new THREE.BoxGeometry(0.07, 0.18, 0.1), metal);
+      mag.position.set(0, -0.15, -0.05);
+      group.add(body, barrel, mag);
+    } else if (type === 'CROSSBOW') {
+      const wood = new THREE.MeshStandardMaterial({ color: 0x92400e });
+      const stock = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.1, 0.6), wood);
+      const bow = new THREE.Mesh(new THREE.BoxGeometry(0.7, 0.06, 0.06), wood);
+      bow.position.set(0, 0.02, -0.25);
+      group.add(stock, bow);
+    } else if (type === 'GRENADE') {
+      const green = new THREE.MeshStandardMaterial({ color: 0x3f6212, roughness: 0.6 });
+      const metal = new THREE.MeshStandardMaterial({ color: 0x9ca3af, metalness: 0.8 });
+      const body = new THREE.Mesh(new THREE.SphereGeometry(0.14, 10, 8), green);
+      const cap = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.08, 0.08), metal);
+      cap.position.y = 0.15;
+      group.add(body, cap);
     } else if (type === 'MEDKIT') {
       const red = new THREE.MeshStandardMaterial({ color: 0xdc2626 });
       const white = new THREE.MeshStandardMaterial({ color: 0xffffff });
@@ -1186,10 +1388,10 @@ export class World {
     const crateGeo = new THREE.BoxGeometry(0.9, 0.9, 0.9);
 
     const lootPool: Array<LootCrate['lootType']> = [
-      'RIFLE', 'SHOTGUN', 'SNIPER', 'PISTOL', 'MEDKIT', 'ARMOR',
-      'RIFLE', 'SHOTGUN', 'MEDKIT', 'ARMOR', 'PISTOL', 'SNIPER',
-      'RIFLE', 'SNIPER', 'MEDKIT', 'ARMOR', 'SHOTGUN', 'RIFLE',
-      'SCOPE4', 'SCOPE8', 'SCOPE4'
+      'RIFLE', 'SHOTGUN', 'SNIPER', 'SMG', 'MEDKIT', 'ARMOR',
+      'LMG', 'DMR', 'MEDKIT', 'ARMOR', 'GRENADE', 'SNIPER',
+      'RIFLE', 'DMR', 'MEDKIT', 'ARMOR', 'SHOTGUN', 'SMG',
+      'SCOPE4', 'SCOPE8', 'SCOPE4', 'GRENADE', 'LMG'
     ];
 
     // One supply crate just outside each structure (on its flattened margin)
@@ -1214,6 +1416,27 @@ export class World {
         lootType: lootPool[idx % lootPool.length]
       });
     });
+  }
+
+  // Loose loot lying in the village streets (ammo, meds, grenades, the odd gun)
+  private spawnStreetLoot() {
+    const pool: LootItemType[] = ['AMMO', 'AMMO', 'AMMO', 'MEDKIT', 'GRENADE', 'ARMOR', 'PISTOL', 'SMG', 'SHOTGUN', 'SCOPE2'];
+    for (const town of TOWNS) {
+      const want = Math.round(town.r / 3);
+      let placed = 0;
+      for (let tries = 0; tries < 400 && placed < want; tries++) {
+        const a = Math.random() * Math.PI * 2;
+        const d = Math.random() * town.r;
+        const x = Math.round(town.x + Math.cos(a) * d);
+        const z = Math.round(town.z + Math.sin(a) * d);
+        if (!this.inBounds(x, z) || !this.road[this.colIndex(x, z)]) continue;
+        const top = this.getSurfaceHeight(x, z);
+        if (top !== this.h(x, z) + 1 || top < 5) continue; // nothing built on top
+        const type = pick(pool);
+        this.spawnGroundItem(x + 0.5, top + 0.7, z + 0.5, type, type === 'GRENADE' ? 1 : 30);
+        placed++;
+      }
+    }
   }
 
   // Top-down colour map of the island (1 px = 2 blocks) for the minimap
@@ -1247,8 +1470,10 @@ export class World {
           r = 214; g = 196; b = 128;
         } else if (type === World.BLOCK_WOOD_PLANK || type === World.BLOCK_WOOD_LOG) {
           r = 150; g = 105; b = 60;
-        } else if (type === World.BLOCK_STONE) {
+        } else if (type === World.BLOCK_STONE || type === World.BLOCK_IRON_ORE) {
           r = 130; g = 130; b = 130;
+        } else if (type === World.BLOCK_GRAVEL) {
+          r = 168; g = 160; b = 148;
         } else if (type === World.BLOCK_LEAVES) {
           r = 38; g = 96; b = 40;
         } else {
@@ -1421,6 +1646,8 @@ export class World {
       case World.BLOCK_WOOD_LOG: return TILE_LOG;
       case World.BLOCK_LEAVES: return TILE_LEAVES;
       case World.BLOCK_SAND: return TILE_SAND;
+      case World.BLOCK_GRAVEL: return TILE_GRAVEL;
+      case World.BLOCK_IRON_ORE: return TILE_IRON_ORE;
       default: return TILE_STONE;
     }
   }

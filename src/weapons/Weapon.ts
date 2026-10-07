@@ -1,6 +1,9 @@
 import * as THREE from 'three';
+import { t } from '../i18n';
+import type { GunType } from '../world/World';
 
-export type WeaponType = 'PICKAXE' | 'PISTOL' | 'SHOTGUN' | 'RIFLE' | 'SNIPER' | 'MEDKIT' | 'BLOCK';
+export type WeaponType = 'PICKAXE' | GunType | 'MEDKIT' | 'BLOCK' | 'GRENADE';
+export type ResourceType = 'wood' | 'stone' | 'iron' | 'fiber';
 
 export interface WeaponData {
   type: WeaponType;
@@ -13,6 +16,7 @@ export interface WeaponData {
   fireRate: number; // in seconds
   automatic: boolean;
   spread: number;
+  adsSpread?: number; // spread while aiming
   range: number;
   pellets?: number;
   reloadTime: number;
@@ -25,9 +29,27 @@ export interface WeaponData {
 const SCOPE_RULES: { [key: string]: { base: number; max: number } } = {
   PISTOL: { base: 1, max: 2 },
   SHOTGUN: { base: 1, max: 2 },
+  SMG: { base: 1, max: 2 },
   RIFLE: { base: 1, max: 4 },
+  LMG: { base: 1, max: 4 },
+  CROSSBOW: { base: 1, max: 4 },
+  DMR: { base: 1, max: 8 },
   SNIPER: { base: 2, max: 8 }
 };
+
+// Gun stats (name comes from i18n). damage per bullet/pellet; fireRate = seconds between shots
+const GUN_STATS: { [key in GunType]: Omit<WeaponData, 'type' | 'name' | 'slotIndex' | 'currentAmmo' | 'reserveAmmo'> } = {
+  PISTOL: { damage: 34, maxAmmo: 15, fireRate: 0.22, automatic: false, spread: 0.02, adsSpread: 0.005, range: 50, reloadTime: 1.5, icon: '🔫' },
+  SHOTGUN: { damage: 18, maxAmmo: 5, fireRate: 0.8, automatic: false, spread: 0.09, adsSpread: 0.075, range: 30, pellets: 7, reloadTime: 2.2, icon: '💥' },
+  SMG: { damage: 22, maxAmmo: 30, fireRate: 0.075, automatic: true, spread: 0.045, adsSpread: 0.02, range: 45, reloadTime: 1.7, icon: '🌀' },
+  RIFLE: { damage: 36, maxAmmo: 30, fireRate: 0.11, automatic: true, spread: 0.035, adsSpread: 0.01, range: 80, reloadTime: 2.0, icon: '⚡' },
+  LMG: { damage: 30, maxAmmo: 75, fireRate: 0.09, automatic: true, spread: 0.06, adsSpread: 0.022, range: 85, reloadTime: 4.2, icon: '🔥' },
+  DMR: { damage: 62, maxAmmo: 10, fireRate: 0.38, automatic: false, spread: 0.04, adsSpread: 0.004, range: 120, reloadTime: 2.3, icon: '🎯' },
+  SNIPER: { damage: 120, maxAmmo: 5, fireRate: 1.3, automatic: false, spread: 0.08, adsSpread: 0.001, range: 150, reloadTime: 2.5, icon: '🔭' },
+  CROSSBOW: { damage: 95, maxAmmo: 1, fireRate: 0.4, automatic: false, spread: 0.03, adsSpread: 0.003, range: 90, reloadTime: 1.8, icon: '🏹' }
+};
+
+export const RESOURCE_ICONS: { [key in ResourceType]: string } = { wood: '🪵', stone: '🪨', iron: '⛓️', fiber: '🌿' };
 
 /** Scope magnification -> camera FOV (iron sights still zoom in a little). */
 export function fovForZoom(zoom: number, baseFov: number = 75): number {
@@ -40,6 +62,7 @@ export class WeaponManager {
   weapons: Map<WeaponType, WeaponData> = new Map();
   activeType: WeaponType = 'PICKAXE';
   lastFireTime: number = 0;
+  private lastFireByType: { [key: string]: number } = {}; // cooldowns don't carry over between weapons
   isReloading: boolean = false;
   reloadStartTime: number = 0;
   isAiming: boolean = false;
@@ -48,6 +71,8 @@ export class WeaponManager {
   slot2Weapon: WeaponType | null = null;
   slot3Weapon: WeaponType | null = null;
   unlockedWeapons: Set<WeaponType> = new Set(['PICKAXE', 'BLOCK']);
+  pickaxeTier: number = 1;
+  resources: { [key in ResourceType]: number } = { wood: 0, stone: 0, iron: 0, fiber: 0 };
 
   // Viewmodel 3D mesh
   viewmodelGroup: THREE.Group;
@@ -69,9 +94,10 @@ export class WeaponManager {
   }
 
   private initDefaultWeapons() {
+    this.pickaxeTier = 1;
     this.weapons.set('PICKAXE', {
       type: 'PICKAXE',
-      name: '곡괭이 (채굴/근접)',
+      name: t('w.PICKAXE'),
       slotIndex: 1,
       damage: 30,
       maxAmmo: 0,
@@ -85,82 +111,23 @@ export class WeaponManager {
       icon: '⛏️'
     });
 
-    this.weapons.set('PISTOL', {
-      type: 'PISTOL',
-      scope: SCOPE_RULES.PISTOL.base,
-      maxScope: SCOPE_RULES.PISTOL.max,
-      name: 'P92 권총',
-      slotIndex: 2,
-      damage: 34,
-      maxAmmo: 15,
-      currentAmmo: 0,
-      reserveAmmo: 0,
-      fireRate: 0.22,
-      automatic: false,
-      spread: 0.02,
-      range: 50,
-      reloadTime: 1.5,
-      icon: '🔫'
-    });
-
-    this.weapons.set('SHOTGUN', {
-      type: 'SHOTGUN',
-      scope: SCOPE_RULES.SHOTGUN.base,
-      maxScope: SCOPE_RULES.SHOTGUN.max,
-      name: 'S1897 샷건',
-      slotIndex: 3,
-      damage: 18,
-      maxAmmo: 5,
-      currentAmmo: 0,
-      reserveAmmo: 0,
-      fireRate: 0.8,
-      automatic: false,
-      spread: 0.09,
-      range: 30,
-      pellets: 7,
-      reloadTime: 2.2,
-      icon: '💥'
-    });
-
-    this.weapons.set('RIFLE', {
-      type: 'RIFLE',
-      scope: SCOPE_RULES.RIFLE.base,
-      maxScope: SCOPE_RULES.RIFLE.max,
-      name: '돌격소총',
-      slotIndex: 2,
-      damage: 36,
-      maxAmmo: 30,
-      currentAmmo: 0,
-      reserveAmmo: 0,
-      fireRate: 0.11,
-      automatic: true,
-      spread: 0.035,
-      range: 80,
-      reloadTime: 2.0,
-      icon: '⚡'
-    });
-
-    this.weapons.set('SNIPER', {
-      type: 'SNIPER',
-      scope: SCOPE_RULES.SNIPER.base,
-      maxScope: SCOPE_RULES.SNIPER.max,
-      name: '저격소총',
-      slotIndex: 3,
-      damage: 120,
-      maxAmmo: 5,
-      currentAmmo: 0,
-      reserveAmmo: 0,
-      fireRate: 1.3,
-      automatic: false,
-      spread: 0.005,
-      range: 150,
-      reloadTime: 2.5,
-      icon: '🎯'
-    });
+    for (const type of Object.keys(GUN_STATS) as GunType[]) {
+      const rule = SCOPE_RULES[type];
+      this.weapons.set(type, {
+        ...GUN_STATS[type],
+        type,
+        name: t(`w.${type}`),
+        slotIndex: 2,
+        currentAmmo: 0,
+        reserveAmmo: 0,
+        scope: rule.base,
+        maxScope: rule.max
+      });
+    }
 
     this.weapons.set('MEDKIT', {
       type: 'MEDKIT',
-      name: '구급키트',
+      name: t('w.MEDKIT'),
       slotIndex: 4,
       damage: 0,
       maxAmmo: 0,
@@ -176,7 +143,7 @@ export class WeaponManager {
 
     this.weapons.set('BLOCK', {
       type: 'BLOCK',
-      name: '건축 블록',
+      name: t('w.BLOCK'),
       slotIndex: 5,
       damage: 0,
       maxAmmo: 0,
@@ -189,6 +156,37 @@ export class WeaponManager {
       reloadTime: 0,
       icon: '🧱'
     });
+
+    this.weapons.set('GRENADE', {
+      type: 'GRENADE',
+      name: t('w.GRENADE'),
+      slotIndex: 6,
+      damage: 0,
+      maxAmmo: 0,
+      currentAmmo: 0,
+      reserveAmmo: 0,
+      fireRate: 0.8,
+      automatic: false,
+      spread: 0,
+      range: 0,
+      reloadTime: 0,
+      icon: '💣'
+    });
+  }
+
+  /** Crafted upgrade: faster mining and a harder melee hit. */
+  upgradePickaxe() {
+    const p = this.weapons.get('PICKAXE')!;
+    this.pickaxeTier = 2;
+    p.name = t('w.IRON_PICKAXE');
+    p.damage = 55;
+    p.fireRate = 0.18;
+    const head = this.weaponMeshes.get('PICKAXE')?.children[1] as THREE.Mesh | undefined;
+    if (head) (head.material as THREE.MeshStandardMaterial).color.setHex(0xe5e7eb);
+  }
+
+  addResource(type: ResourceType, n: number = 1) {
+    this.resources[type] += n;
   }
 
   equipWeapon(type: WeaponType, ammoBonus: number = 30): string {
@@ -371,6 +369,54 @@ export class WeaponManager {
     this.weaponMeshes.set('SNIPER', sniperGroup);
     this.viewmodelGroup.add(sniperGroup);
 
+    // Extra guns share a simple box-built look with their own colours / proportions
+    const gunModel = (type: WeaponType, bodyColor: number, len: number, magH: number, extra?: (g: THREE.Group) => void) => {
+      const g = new THREE.Group();
+      const bodyMat = new THREE.MeshStandardMaterial({ color: bodyColor, roughness: 0.5, metalness: 0.4 });
+      const body = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.08, len), bodyMat);
+      body.position.set(0, 0, -0.05);
+      g.add(body);
+      const brl = new THREE.Mesh(new THREE.BoxGeometry(0.03, 0.03, len * 0.6), darkGunMat);
+      brl.position.set(0, 0.02, -0.05 - len * 0.75);
+      g.add(brl);
+      if (magH > 0) {
+        const mag = new THREE.Mesh(new THREE.BoxGeometry(0.04, magH, 0.06), darkGunMat);
+        mag.position.set(0, -0.04 - magH / 2, -0.08);
+        g.add(mag);
+      }
+      if (extra) extra(g);
+      this.weaponMeshes.set(type, g);
+      this.viewmodelGroup.add(g);
+    };
+    gunModel('SMG', 0x1f2937, 0.24, 0.16);
+    gunModel('LMG', 0x57534e, 0.45, 0, g => {
+      const box = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.09, 0.1), darkGunMat);
+      box.position.set(0, -0.08, -0.08);
+      g.add(box);
+    });
+    gunModel('DMR', 0x8b6f47, 0.42, 0.1, g => {
+      const sc = new THREE.Mesh(new THREE.CylinderGeometry(0.022, 0.022, 0.18, 8), darkGunMat);
+      sc.rotation.x = Math.PI / 2;
+      sc.position.set(0, 0.07, -0.05);
+      g.add(sc);
+    });
+    gunModel('CROSSBOW', 0x92400e, 0.36, 0, g => {
+      const bow = new THREE.Mesh(new THREE.BoxGeometry(0.42, 0.03, 0.03), new THREE.MeshStandardMaterial({ color: 0x78350f }));
+      bow.position.set(0, 0.03, -0.3);
+      g.add(bow);
+    });
+
+    // Grenade
+    const nadeGroup = new THREE.Group();
+    const nade = new THREE.Mesh(new THREE.SphereGeometry(0.06, 10, 8), new THREE.MeshStandardMaterial({ color: 0x3f6212, roughness: 0.6 }));
+    const pin = new THREE.Mesh(new THREE.BoxGeometry(0.03, 0.04, 0.03), ironMat);
+    pin.position.y = 0.065;
+    nadeGroup.add(nade, pin);
+    nadeGroup.scale.setScalar(0.65);
+    nadeGroup.position.set(0.02, -0.03, 0.05);
+    this.weaponMeshes.set('GRENADE', nadeGroup);
+    this.viewmodelGroup.add(nadeGroup);
+
     // 6. Medkit
     const medGroup = new THREE.Group();
     const medMat = new THREE.MeshStandardMaterial({ color: 0xef4444, roughness: 0.5 });
@@ -399,7 +445,7 @@ export class WeaponManager {
 
   selectWeapon(type: WeaponType) {
     if (!this.weapons.has(type)) return;
-    if (!this.unlockedWeapons.has(type) && type !== 'PICKAXE' && type !== 'BLOCK' && type !== 'MEDKIT') {
+    if (!this.unlockedWeapons.has(type) && type !== 'PICKAXE' && type !== 'BLOCK' && type !== 'MEDKIT' && type !== 'GRENADE') {
       return; // Gun not looted yet!
     }
     this.activeType = type;
@@ -415,7 +461,10 @@ export class WeaponManager {
     this.slot2Weapon = null;
     this.slot3Weapon = null;
     this.unlockedWeapons = new Set(['PICKAXE', 'BLOCK']);
+    this.resources = { wood: 0, stone: 0, iron: 0, fiber: 0 };
     this.initDefaultWeapons();
+    const head = this.weaponMeshes.get('PICKAXE')?.children[1] as THREE.Mesh | undefined;
+    if (head) (head.material as THREE.MeshStandardMaterial).color.setHex(0xcccccc);
     this.selectWeapon('PICKAXE');
   }
 
@@ -433,7 +482,7 @@ export class WeaponManager {
     let targetZ = -0.45;
 
     if (this.isAiming) {
-      if (this.activeType === 'SNIPER') {
+      if ((this.getActiveWeapon().scope ?? 1) >= 4) {
         // Hide model when using sniper scope overlay
         targetY = -2;
       } else {
@@ -498,13 +547,13 @@ export class WeaponManager {
     if (this.isReloading) return false;
     const now = performance.now() / 1000;
     const weapon = this.getActiveWeapon();
-    if (now - this.lastFireTime < weapon.fireRate) return false;
+    if (now - (this.lastFireByType[weapon.type] ?? 0) < weapon.fireRate) return false;
 
     if (weapon.maxAmmo > 0 && weapon.currentAmmo <= 0) {
       return false;
     }
     // Medkits and blocks are counted items: none left means nothing to use
-    if ((weapon.type === 'MEDKIT' || weapon.type === 'BLOCK') && weapon.currentAmmo <= 0) {
+    if ((weapon.type === 'MEDKIT' || weapon.type === 'BLOCK' || weapon.type === 'GRENADE') && weapon.currentAmmo <= 0) {
       return false;
     }
     return true;
@@ -513,9 +562,10 @@ export class WeaponManager {
   consumeAmmo() {
     this.lastFireTime = performance.now() / 1000;
     const weapon = this.getActiveWeapon();
+    this.lastFireByType[weapon.type] = this.lastFireTime;
     if (weapon.maxAmmo > 0) {
       weapon.currentAmmo--;
-    } else if (weapon.type === 'BLOCK' || weapon.type === 'MEDKIT') {
+    } else if (weapon.type === 'BLOCK' || weapon.type === 'MEDKIT' || weapon.type === 'GRENADE') {
       weapon.currentAmmo = Math.max(0, weapon.currentAmmo - 1);
     }
   }

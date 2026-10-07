@@ -1,17 +1,22 @@
 import * as THREE from 'three';
-import { World, isScope, SCOPE_LEVEL } from '../world/World';
-import { WeaponManager, WeaponType, fovForZoom } from '../weapons/Weapon';
+import { World, isScope, isGun, itemName, SCOPE_LEVEL } from '../world/World';
+import { WeaponManager, WeaponType, fovForZoom, ResourceType } from '../weapons/Weapon';
+import { t } from '../i18n';
+import { RECIPES } from '../crafting/Recipes';
 import { sounds } from '../audio/SoundManager';
 import { ZoneManager } from '../zone/ZoneManager';
 
 export type Stance = 'stand' | 'crouch' | 'prone';
 
 // Body height, eye height, move speed and weapon spread per stance
-const STANCES: { [key in Stance]: { height: number; eye: number; speed: number; spread: number; label: string } } = {
-  stand: { height: 1.8, eye: 1.6, speed: 1.0, spread: 1.0, label: '서기' },
-  crouch: { height: 1.25, eye: 1.05, speed: 0.55, spread: 0.7, label: '앉기' },
-  prone: { height: 0.6, eye: 0.4, speed: 0.25, spread: 0.45, label: '엎드리기' }
+const STANCES: { [key in Stance]: { height: number; eye: number; speed: number; spread: number } } = {
+  stand: { height: 1.8, eye: 1.6, speed: 1.0, spread: 1.0 },
+  crouch: { height: 1.25, eye: 1.05, speed: 0.55, spread: 0.7 },
+  prone: { height: 0.6, eye: 0.4, speed: 0.25, spread: 0.45 }
 };
+
+/** Damage source ids (translated only when shown). */
+export const SRC_ZONE = 'ZONE';
 
 export class Player {
   camera: THREE.PerspectiveCamera;
@@ -40,7 +45,8 @@ export class Player {
   static readonly RADIUS = 0.3;
   static readonly HEIGHT = 1.8;
   static readonly EYE_HEIGHT = 1.6;
-  lastDamageSource: string = '자기장';
+  lastDamageSource: string = SRC_ZONE;
+  uiOpen: boolean = false; // crafting menu is open: no shooting / mouse look
 
   // Stance (C: crouch, Z: prone)
   stance: Stance = 'stand';
@@ -52,7 +58,7 @@ export class Player {
   }
 
   get stanceLabel(): string {
-    return STANCES[this.stance].label;
+    return t(`stance.${this.stance}`);
   }
 
   /** Switch stance; standing up needs head room. Returns false if blocked. */
@@ -63,7 +69,7 @@ export class Player {
     }
     if (STANCES[next].height > this.height &&
         this.world.collidesBox(this.position.x, this.position.y + 0.01, this.position.z, Player.RADIUS, STANCES[next].height)) {
-      if (!silent) this.showToast('⛔ 위가 막혀 있어 일어설 수 없습니다');
+      if (!silent) this.showToast(t('toast.cantStand'));
       return false;
     }
     this.stance = next;
@@ -135,6 +141,7 @@ export class Player {
 
   private initControls() {
     window.addEventListener('keydown', (e) => {
+      if (this.uiOpen) return; // the crafting menu has the keyboard
       this.keys[e.code] = true;
       const k = e.key.toLowerCase();
       if (e.code === 'Space') e.preventDefault();
@@ -178,18 +185,22 @@ export class Player {
         if (this.weapons.slot2Weapon) {
           this.weapons.selectWeapon(this.weapons.slot2Weapon);
         } else {
-          this.showToast('🔫 [주무기 1] 슬롯이 비어있습니다. 건물의 빛기둥이나 상자에서 총기를 파밍하세요!');
+          this.showToast(t('toast.slotEmpty2'));
         }
       }
       if (e.code === 'Digit3' || k === '3') {
         if (this.weapons.slot3Weapon) {
           this.weapons.selectWeapon(this.weapons.slot3Weapon);
         } else {
-          this.showToast('🎯 [주무기 2] 슬롯이 비어있습니다. 건물의 빛기둥이나 상자에서 총기를 파밍하세요!');
+          this.showToast(t('toast.slotEmpty3'));
         }
       }
       if (e.code === 'Digit4' || k === '4') this.weapons.selectWeapon('MEDKIT');
       if (e.code === 'Digit5' || k === '5') this.weapons.selectWeapon('BLOCK');
+      if (e.code === 'Digit6' || k === '6' || e.code === 'KeyG' || k === 'g' || k === 'ㅎ') {
+        if (this.weapons.weapons.get('GRENADE')!.currentAmmo > 0) this.weapons.selectWeapon('GRENADE');
+        else this.showToast(t('toast.noGrenade'));
+      }
 
       // Reload
       if (e.code === 'KeyR' || k === 'r' || k === 'ㄱ') {
@@ -231,9 +242,11 @@ export class Player {
 
     // Mouse wheel for switching weapons
     window.addEventListener('wheel', (e) => {
-      const slots: WeaponType[] = ['PICKAXE', 'PISTOL', 'RIFLE', 'SHOTGUN', 'SNIPER', 'MEDKIT', 'BLOCK'];
-      const available = slots.filter(t =>
-        t === 'PICKAXE' || t === 'MEDKIT' || t === 'BLOCK' || this.weapons.hasGun(t));
+      if (this.uiOpen) return;
+      const w = this.weapons;
+      const slots: (WeaponType | null)[] = ['PICKAXE', w.slot2Weapon, w.slot3Weapon, 'MEDKIT', 'BLOCK', 'GRENADE'];
+      const available = slots.filter((s): s is WeaponType =>
+        s !== null && (s !== 'GRENADE' || w.weapons.get('GRENADE')!.currentAmmo > 0));
       const curIdx = Math.max(0, available.indexOf(this.weapons.activeType));
       const step = e.deltaY > 0 ? 1 : -1;
       const nextIdx = (curIdx + step + available.length) % available.length;
@@ -260,9 +273,11 @@ export class Player {
   update(
     delta: number,
     zone: ZoneManager,
-    onPlayerShoot: (origin: THREE.Vector3, dir: THREE.Vector3, damage: number, spread: number) => void
+    onPlayerShoot: (origin: THREE.Vector3, dir: THREE.Vector3, damage: number, spread: number) => void,
+    onThrowGrenade?: (origin: THREE.Vector3, dir: THREE.Vector3) => void
   ) {
     if (!this.isAlive) return;
+    this.onThrowGrenade = onThrowGrenade;
 
     if (this.inPlane) {
       if (this.stance !== 'stand') this.resetStance();
@@ -285,7 +300,7 @@ export class Player {
 
     // Check Blue zone damage
     if (!zone.isInsideBlueZone(this.position.x, this.position.z)) {
-      this.takeDamage(zone.getCurrentDPS() * delta, false, '자기장');
+      this.takeDamage(zone.getCurrentDPS() * delta, false, SRC_ZONE);
     }
 
     if (this.isAirborne) {
@@ -322,7 +337,7 @@ export class Player {
     this.camera.rotation.x = this.pitch;
 
     // Aim Down Sights (Right click)
-    const isAiming = this.isRightMouseDown && this.weapons.activeType !== 'BLOCK';
+    const isAiming = this.isRightMouseDown && !this.uiOpen && isGun(this.weapons.activeType);
     this.weapons.isAiming = isAiming;
 
     // Adjust camera FOV for ADS according to the mounted scope
@@ -462,7 +477,7 @@ export class Player {
   }
 
   private canAutoLoot(type: string): boolean {
-    if (type === 'MEDKIT' || type === 'ARMOR') return true;
+    if (type === 'MEDKIT' || type === 'ARMOR' || type === 'GRENADE') return true;
     if (type === 'AMMO') return this.weapons.getAmmoTarget() !== null;
     if (isScope(type)) return this.weapons.canAttachScope(SCOPE_LEVEL[type]);
     const gun = type as WeaponType;
@@ -507,7 +522,22 @@ export class Player {
       return;
     }
 
-    // 3. Firearms & Pickaxe
+    // 3. Grenade: thrown along the view direction
+    if (weapon.type === 'GRENADE') {
+      if (this.weapons.canFire() && this.onThrowGrenade) {
+        this.weapons.consumeAmmo();
+        this.weapons.applySwing();
+        sounds.playSwing();
+        const dir = new THREE.Vector3();
+        this.camera.getWorldDirection(dir);
+        this.onThrowGrenade(this.camera.position.clone(), dir);
+        if (weapon.currentAmmo <= 0) this.weapons.selectWeapon(this.weapons.slot2Weapon || 'PICKAXE');
+      }
+      this.isMouseDown = false;
+      return;
+    }
+
+    // 4. Firearms & Pickaxe
     const sm = STANCES[this.stance].spread; // crouching / lying down steadies your aim
     if (this.weapons.canFire()) {
       this.weapons.consumeAmmo();
@@ -519,31 +549,72 @@ export class Player {
         this.weapons.applySwing();
         sounds.playSwing();
         onPlayerShoot(this.camera.position, dir, weapon.damage, 0.01);
-
       } else {
         this.weapons.applyRecoil();
-        if (weapon.type === 'PISTOL') {
-          sounds.playPistol();
-          onPlayerShoot(this.camera.position, dir, weapon.damage, (this.weapons.isAiming ? 0.005 : weapon.spread) * sm);
-      } else if (weapon.type === 'SHOTGUN') {
-        sounds.playShotgun();
-        const pellets = weapon.pellets || 6;
+        sounds.playGun(weapon.type);
+        const spread = (this.weapons.isAiming ? (weapon.adsSpread ?? weapon.spread) : weapon.spread) * sm;
+        const pellets = weapon.pellets || 1;
         for (let i = 0; i < pellets; i++) {
-          onPlayerShoot(this.camera.position, dir, weapon.damage, weapon.spread * sm);
+          onPlayerShoot(this.camera.position, dir, weapon.damage, spread);
         }
-      } else if (weapon.type === 'RIFLE') {
-        sounds.playRifle();
-        onPlayerShoot(this.camera.position, dir, weapon.damage, (this.weapons.isAiming ? 0.01 : weapon.spread) * sm);
-      } else if (weapon.type === 'SNIPER') {
-        sounds.playSniper();
-        onPlayerShoot(this.camera.position, dir, weapon.damage, (this.weapons.isAiming ? 0.001 : 0.08) * sm);
       }
-    }
 
       if (!weapon.automatic) {
         this.isMouseDown = false; // Require click again for semi-auto
       }
     }
+  }
+
+  private onThrowGrenade?: (origin: THREE.Vector3, dir: THREE.Vector3) => void;
+
+  /** Mined block -> resource. Returns the resource gained, if any. */
+  gainFromBlock(blockType: number): ResourceType | null {
+    let res: ResourceType | null = null;
+    if (blockType === World.BLOCK_WOOD_PLANK || blockType === World.BLOCK_WOOD_LOG) res = 'wood';
+    else if (blockType === World.BLOCK_STONE || blockType === World.BLOCK_GRAVEL) res = 'stone';
+    else if (blockType === World.BLOCK_IRON_ORE) res = 'iron';
+    else if (blockType === World.BLOCK_LEAVES) res = 'fiber';
+    if (res) this.weapons.addResource(res, 1);
+    return res;
+  }
+
+  canCraft(id: string): boolean {
+    const r = RECIPES.find(x => x.id === id);
+    if (!r) return false;
+    const res = this.weapons.resources;
+    for (const k in r.cost) {
+      if (res[k as ResourceType] < (r.cost[k as ResourceType] ?? 0)) return false;
+    }
+    if (id === 'IRON_PICKAXE') return this.weapons.pickaxeTier < 2;
+    if (id === 'AMMO') return this.weapons.getAmmoTarget() !== null;
+    if (id === 'SCOPE2') return this.weapons.canAttachScope(2);
+    if (id === 'ARMOR') return this.armor < this.maxArmor;
+    return true;
+  }
+
+  /** Spend the materials and hand over the item. */
+  craft(id: string): boolean {
+    const r = RECIPES.find(x => x.id === id);
+    if (!r) return false;
+    if (!this.canCraft(id)) {
+      this.showToast(t('toast.cantCraft', { item: t(`r.${id}`) }));
+      return false;
+    }
+    for (const k in r.cost) this.weapons.resources[k as ResourceType] -= r.cost[k as ResourceType] ?? 0;
+    const w = this.weapons;
+    switch (id) {
+      case 'BLOCKS': w.addConsumable('BLOCK', 10); break;
+      case 'MEDKIT': w.addConsumable('MEDKIT', 1); break;
+      case 'GRENADE': w.addConsumable('GRENADE', 2); break;
+      case 'AMMO': w.addAmmo(w.getAmmoTarget()!, 30); break;
+      case 'IRON_PICKAXE': w.upgradePickaxe(); break;
+      case 'ARMOR': this.armor = Math.min(this.maxArmor, this.armor + 50); break;
+      case 'SCOPE2': w.attachScope(2); break;
+      default: w.equipWeapon(id as WeaponType, 20); break; // crafted guns
+    }
+    sounds.playCrateOpen();
+    this.showToast(t('toast.crafted', { item: t(`r.${id}`) }));
+    return true;
   }
 
   // Interacting with Loot: Death Crates, Ground Items, Supply Crates
@@ -577,10 +648,10 @@ export class Player {
     let text = '';
     if (item.type === 'MEDKIT') {
       this.weapons.addConsumable('MEDKIT', 1);
-      text = '🩹 구급키트 획득!';
+      text = t('toast.medkit');
     } else if (item.type === 'ARMOR') {
       this.armor = Math.min(100, this.armor + 75);
-      text = '🛡️ 방탄 조끼 장착! (방어구 +75)';
+      text = t('toast.armor');
     } else if (isScope(item.type)) {
       const gun = this.weapons.attachScope(SCOPE_LEVEL[item.type as keyof typeof SCOPE_LEVEL]);
       if (!gun) {
@@ -589,20 +660,24 @@ export class Player {
         this.showToast(this.scopeRefusal());
         return;
       }
-      text = `🔭 ${item.name} → [${gun.name}] 장착! 우클릭으로 ${gun.scope}배 조준`;
+      text = t('toast.scopeOn', { item: itemName(item.type), gun: gun.name, n: gun.scope ?? 1 });
+    } else if (item.type === 'GRENADE') {
+      const n = Math.max(1, Math.min(3, item.ammoCount));
+      this.weapons.addConsumable('GRENADE', n);
+      text = t('toast.grenade', { n });
     } else if (item.type === 'AMMO') {
       const target = this.weapons.getAmmoTarget();
       if (!target) {
         item.picked = false;
         item.mesh.visible = true;
-        this.showToast('📦 탄약을 쓰려면 먼저 총기를 파밍하세요!');
+        this.showToast(t('toast.needGunForAmmo'));
         return;
       }
       this.weapons.addAmmo(target, item.ammoCount);
-      text = `📦 탄약 ${item.ammoCount}발 획득!`;
+      text = t('toast.ammo', { n: item.ammoCount });
     } else {
       const name = this.weapons.equipWeapon(item.type, item.ammoCount);
-      text = `🔫 [${name}] 획득 및 장착 완료! 좌클릭: 사격 / 우클릭: 조준 / [R]: 재장전`;
+      text = t('toast.gun', { gun: name });
     }
 
     this.showToast(text);
@@ -613,7 +688,7 @@ export class Player {
     dc.mesh.visible = false;
     sounds.playCrateOpen();
 
-    if (dc.weapons && dc.weapons[0]) {
+    if (dc.weapons && dc.weapons[0] && isGun(dc.weapons[0])) {
       this.weapons.equipWeapon(dc.weapons[0], dc.ammoCount);
     } else {
       const target = this.weapons.getAmmoTarget();
@@ -626,14 +701,14 @@ export class Player {
       this.armor = Math.min(100, this.armor + 50);
     }
 
-    this.showToast(`⚰️ [${dc.victimName}] 전리품 상자 파밍 완료! (+${dc.ammoCount}발)`);
+    this.showToast(t('toast.deathCrate', { name: dc.victimName, n: dc.ammoCount }));
   }
 
   private scopeRefusal(): string {
     if (!this.weapons.slot2Weapon && !this.weapons.slot3Weapon) {
-      return '🔭 스코프를 장착하려면 먼저 총을 구하세요';
+      return t('toast.scopeNoGun');
     }
-    return '🔭 장착할 총이 없습니다 (권총·샷건 2배, 돌격소총 4배, 저격소총 8배까지)';
+    return t('toast.scopeNoFit');
   }
 
   lootSupplyCrate(crate: any) {
@@ -648,17 +723,20 @@ export class Player {
     let text = '';
     if (crate.lootType === 'MEDKIT') {
       this.weapons.addConsumable('MEDKIT', 2);
-      text = '🩹 보급 구급상자 획득!';
+      text = t('toast.crateMedkit');
     } else if (crate.lootType === 'ARMOR') {
       this.armor = 100;
-      text = '🛡️ 레벨 3 최고급 방탄 조끼 획득!';
+      text = t('toast.crateArmor');
     } else if (isScope(crate.lootType)) {
       const level = SCOPE_LEVEL[crate.lootType as keyof typeof SCOPE_LEVEL];
       const gun = this.weapons.attachScope(level)!;
-      text = `📦 보급품: ${level}배율 스코프 → [${gun.name}] 장착!`;
-    } else {
+      text = t('toast.crateScope', { n: level, gun: gun.name });
+    } else if (crate.lootType === 'GRENADE') {
+      this.weapons.addConsumable('GRENADE', 3);
+      text = t('toast.crateGrenade', { n: 3 });
+    } else if (isGun(crate.lootType)) {
       const name = this.weapons.equipWeapon(crate.lootType, 60);
-      text = `📦 보급 무기: ${name} 획득! (+60발)`;
+      text = t('toast.crateGun', { gun: name });
     }
 
     this.showToast(text);
@@ -677,7 +755,7 @@ export class Player {
     }
   }
 
-  takeDamage(amount: number, playHitSfx: boolean = true, source: string = '알 수 없음') {
+  takeDamage(amount: number, playHitSfx: boolean = true, source: string = '?') {
     if (!this.isAlive) return;
     this.lastDamageSource = source;
 

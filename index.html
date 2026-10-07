@@ -1,9 +1,9 @@
 <!DOCTYPE html>
-<html lang="ko">
+<html lang="en">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>BlockBattle - 블록 배틀로얄</title>
+  <title>BlockBattle - Voxel Battle Royale</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 16 16%22%3E%3Crect width=%2216%22 height=%228%22 fill=%22%2316a34a%22/%3E%3Crect y=%228%22 width=%2216%22 height=%228%22 fill=%22%238b5a2b%22/%3E%3C/svg%3E">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -614,6 +614,64 @@
     }
 
     /* Block Placement Ghost / Info */
+    #hotbar-wrap {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 6px;
+    }
+    #res-bar {
+      font-size: 13px;
+      color: #e2e8f0;
+      background: rgba(15, 23, 42, 0.6);
+      padding: 3px 12px;
+      border-radius: 10px;
+      white-space: pre;
+      text-shadow: 0 1px 2px #000;
+    }
+    .hotbar-slot.dim { opacity: 0.45; }
+    .lang-switch { display: flex; gap: 8px; justify-content: center; margin-bottom: 10px; }
+    .lang-switch button {
+      background: rgba(255,255,255,0.08); color: #cbd5e1; border: 1px solid rgba(255,255,255,0.25);
+      border-radius: 8px; padding: 5px 14px; cursor: pointer; font-size: 14px;
+    }
+    .lang-switch button.active { background: #f59e0b; color: #111; border-color: #f59e0b; font-weight: 700; }
+    #craft-panel {
+      display: none;
+      position: absolute;
+      top: 50%; left: 50%;
+      transform: translate(-50%, -50%);
+      width: min(560px, calc(100vw - 32px));
+      max-height: calc(100vh - 60px);
+      overflow-y: auto;
+      background: rgba(15, 23, 42, 0.94);
+      border: 2px solid #f59e0b;
+      border-radius: 14px;
+      padding: 14px 16px;
+      color: #e2e8f0;
+      pointer-events: auto;
+      z-index: 50;
+      font-size: 14px;
+    }
+    .craft-head { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; font-size: 20px; font-weight: 800; color: #fbbf24; }
+    .craft-head small { font-size: 12px; color: #94a3b8; font-weight: 400; }
+    .craft-resbar { display: flex; flex-wrap: wrap; gap: 12px; margin: 10px 0; padding: 8px; background: rgba(255,255,255,0.05); border-radius: 8px; }
+    .craft-res b { color: #fde047; }
+    .craft-row {
+      display: grid; grid-template-columns: 22px 28px 1fr auto; align-items: center; gap: 8px;
+      padding: 5px 8px; border-radius: 8px; cursor: pointer; border: 1px solid transparent;
+    }
+    .craft-row.ok:hover { background: rgba(245, 158, 11, 0.18); border-color: #f59e0b; }
+    .craft-row.no { opacity: 0.5; cursor: default; }
+    .craft-key { background: #334155; border-radius: 4px; text-align: center; font-size: 12px; font-weight: 700; }
+    .craft-icon { font-size: 20px; }
+    .craft-name { display: flex; flex-direction: column; font-weight: 700; }
+    .craft-name small { font-weight: 400; color: #94a3b8; font-size: 11px; }
+    .craft-cost { font-size: 13px; white-space: nowrap; }
+    .craft-cost .miss { color: #f87171; }
+    .craft-cost .have { color: #86efac; }
+    .craft-foot { margin-top: 8px; font-size: 12px; color: #94a3b8; }
+
     #block-info {
       position: absolute;
       bottom: 90px;
@@ -661,18 +719,18 @@
       <div class="status-badge-row">
         <div class="status-badge">
           <span class="icon">👥</span>
-          <span>생존</span>
+          <span data-i18n="hud.alive">Alive</span>
           <span id="alive-count" class="val">20</span>
         </div>
         <div class="status-badge kills">
           <span class="icon">💀</span>
-          <span>처치</span>
+          <span data-i18n="hud.kills">Kills</span>
           <span id="kill-count" class="val">0</span>
         </div>
       </div>
       <div id="zone-notice-box">
         <span id="zone-notice-icon">⚠️</span>
-        <span id="zone-notice-text">자기장 축소 대기 중: 60초</span>
+        <span id="zone-notice-text" data-i18n="hud.zoneInit">Zone shrinks in: 60s</span>
       </div>
     </div>
 
@@ -684,18 +742,19 @@
 
     <!-- Parachute Drop Alert -->
     <div id="drop-prompt">
-      🪂 [SPACE] 눌러서 낙하산 펼치기
+      🪂 [SPACE]
     </div>
 
     <!-- Action Toast -->
-    <div id="action-toast">상자를 열었습니다!</div>
-    <div id="block-info">좌/우클릭: 블록 설치 · 곡괭이(1번)로 캐면 블록 +1</div>
+    <div id="action-toast"></div>
+    <div id="block-info" data-i18n="hud.blockInfo"></div>
+    <div id="craft-panel"></div>
 
     <!-- Bottom HUD -->
     <div id="bottom-ui">
       <!-- Player HP / Armor -->
       <div id="player-stats">
-        <div id="stance-indicator">🧍 서기</div>
+        <div id="stance-indicator">🧍</div>
         <div class="bar-wrapper">
           <span class="bar-label">HP</span>
           <div class="progress-bar">
@@ -704,7 +763,7 @@
           </div>
         </div>
         <div class="bar-wrapper">
-          <span class="bar-label">방어구</span>
+          <span class="bar-label" data-i18n="hud.armor">Armor</span>
           <div class="progress-bar">
             <div id="armor-bar" class="progress-fill armor-fill" style="width: 0%;"></div>
             <span id="armor-text" class="bar-text">0 / 100</span>
@@ -713,46 +772,56 @@
       </div>
 
       <!-- Hotbar -->
+      <div id="hotbar-wrap">
+      <div id="res-bar"></div>
       <div id="hotbar">
         <div class="hotbar-slot active" data-slot="1">
           <span class="slot-num">1</span>
           <span class="slot-icon">⛏️</span>
-          <span class="slot-name">곡괭이</span>
+          <span class="slot-name" data-i18n="w.PICKAXE">Pickaxe</span>
         </div>
         <div class="hotbar-slot" data-slot="2">
           <span class="slot-num">2</span>
           <span class="slot-icon">🔫</span>
-          <span class="slot-name">권총</span>
+          <span class="slot-name"></span>
           <span class="slot-count">15</span>
         </div>
         <div class="hotbar-slot" data-slot="3">
           <span class="slot-num">3</span>
           <span class="slot-icon">💥</span>
-          <span class="slot-name">샷건</span>
+          <span class="slot-name"></span>
           <span class="slot-count">5</span>
         </div>
         <div class="hotbar-slot" data-slot="4">
           <span class="slot-num">4</span>
           <span class="slot-icon">🩹</span>
-          <span class="slot-name">구급키트</span>
+          <span class="slot-name" data-i18n="w.MEDKIT">Medkit</span>
           <span class="slot-count">2</span>
         </div>
         <div class="hotbar-slot" data-slot="5">
           <span class="slot-num">5</span>
           <span class="slot-icon">🧱</span>
-          <span class="slot-name">블록</span>
+          <span class="slot-name" data-i18n="w.BLOCK">Blocks</span>
           <span class="slot-count">30</span>
         </div>
+        <div class="hotbar-slot" data-slot="6">
+          <span class="slot-num">6</span>
+          <span class="slot-icon">💣</span>
+          <span class="slot-name" data-i18n="w.GRENADE">Grenade</span>
+          <span class="slot-count">0</span>
+        </div>
+      </div>
+
       </div>
 
       <!-- Ammo & Weapon Box -->
       <div id="ammo-box">
-        <div id="weapon-name">곡괭이 (근접)</div>
+        <div id="weapon-name"></div>
         <div id="ammo-numbers">
           <span id="current-ammo">∞</span>
           <span id="reserve-ammo">/ ∞</span>
         </div>
-        <div id="fire-mode">채굴 / 근접 타격</div>
+        <div id="fire-mode"></div>
       </div>
     </div>
   </div>
@@ -760,42 +829,41 @@
   <!-- Start Modal -->
   <div id="start-screen" class="screen-modal">
     <h1>BLOCK BATTLE</h1>
-    <p>블록으로 만들어진 섬에서 펼쳐지는 20인 배틀로얄!<br>상자를 파밍하고, 자기장을 피해 최후의 1인이 되세요.</p>
+    <div class="lang-switch"><button data-lang="en">English</button><button data-lang="ko">한국어</button></div>
+    <p data-i18n-html="start.desc"></p>
 
     <div class="key-instructions">
-      <div class="key-item"><span class="key-badge">W A S D</span> 이동 (공중 낙하 / 지상 이동)</div>
-      <div class="key-item"><span class="key-badge">SPACE</span> 점프 / 공중에서 낙하산 펼치기</div>
-      <div class="key-item"><span class="key-badge">마우스 좌클릭</span> 공격 / 총기 발사 / 블록 파괴</div>
-      <div class="key-item"><span class="key-badge">마우스 우클릭</span> 조준 (스코프 배율만큼 확대) / 블록 설치</div>
-      <div class="key-item"><span class="key-badge">R</span> 재장전</div>
-      <div class="key-item"><span class="key-badge">1 ~ 5 / 휠</span> 무기 및 아이템 교체</div>
-      <div class="key-item"><span class="key-badge">E / F</span> 상자 열기 & 아이템 줍기</div>
-      <div class="key-item"><span class="key-badge">SHIFT</span> 달리기</div>
-      <div class="key-item"><span class="key-badge">C / Z</span> 앉기 / 엎드리기 (다시 누르면 일어서기)</div>
+      <div class="key-item"><span class="key-badge">W A S D</span> <span data-i18n="key.move"></span></div>
+      <div class="key-item"><span class="key-badge">SPACE</span> <span data-i18n="key.jump"></span></div>
+      <div class="key-item"><span class="key-badge" data-i18n="key.lmb"></span> <span data-i18n="key.lmbDesc"></span></div>
+      <div class="key-item"><span class="key-badge" data-i18n="key.rmb"></span> <span data-i18n="key.rmbDesc"></span></div>
+      <div class="key-item"><span class="key-badge">R</span> <span data-i18n="key.reload"></span></div>
+      <div class="key-item"><span class="key-badge" data-i18n="key.slots"></span> <span data-i18n="key.slotsDesc"></span></div>
+      <div class="key-item"><span class="key-badge">E / F</span> <span data-i18n="key.loot"></span></div>
+      <div class="key-item"><span class="key-badge">Q</span> <span data-i18n="key.craft"></span></div>
+      <div class="key-item"><span class="key-badge">G</span> <span data-i18n="key.grenade"></span></div>
+      <div class="key-item"><span class="key-badge">SHIFT</span> <span data-i18n="key.sprint"></span></div>
+      <div class="key-item"><span class="key-badge">C / Z</span> <span data-i18n="key.stance"></span></div>
     </div>
 
-    <button id="btn-start" class="play-btn">전장 강하 시작</button>
+    <button id="btn-start" class="play-btn" data-i18n="start.play">Drop In</button>
   </div>
 
   <!-- Victory Modal -->
   <div id="victory-screen" class="screen-modal">
     <div class="chicken-icon">🍗</div>
-    <h1>최후의 생존자! 승리했습니다!</h1>
-    <p>축하합니다! 최후의 1인으로 살아남아 전장을 지배했습니다.</p>
-    <div id="victory-stats" style="margin-bottom: 25px; font-size: 20px; color: #fde047;">
-      총 처치 수: <span id="victory-kills">0</span>킬
-    </div>
-    <button id="btn-restart-win" class="play-btn">다시 플레이</button>
+    <h1 data-i18n="win.title"></h1>
+    <p data-i18n="win.desc"></p>
+    <div id="victory-stats" style="margin-bottom: 25px; font-size: 20px; color: #fde047;" data-i18n-html="win.kills"></div>
+    <button id="btn-restart-win" class="play-btn" data-i18n="win.again"></button>
   </div>
 
   <!-- Game Over Modal -->
   <div id="gameover-screen" class="screen-modal">
-    <h1>사망하셨습니다</h1>
-    <p id="gameover-cause">자기장 밖에서 쓰러졌습니다.</p>
-    <div id="gameover-stats" style="margin-bottom: 25px; font-size: 18px; color: #cbd5e1;">
-      최종 순위: <span id="gameover-rank">12</span>위 / 총 <span id="gameover-kills">0</span>킬
-    </div>
-    <button id="btn-restart-lose" class="play-btn">다시 도전</button>
+    <h1 data-i18n="over.title"></h1>
+    <p id="gameover-cause"></p>
+    <div id="gameover-stats" style="margin-bottom: 25px; font-size: 18px; color: #cbd5e1;" data-i18n-html="over.stats"></div>
+    <button id="btn-restart-lose" class="play-btn" data-i18n="over.again"></button>
   </div>
 
   <script type="module" src="/src/main.ts"></script>

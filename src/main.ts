@@ -1,7 +1,9 @@
 import { initAnalytics, trackMatchStart, trackMatchEnd } from './analytics';
 import * as THREE from 'three';
 import { World } from './world/World';
-import { Player } from './entities/Player';
+import { Player, SRC_ZONE } from './entities/Player';
+import { CraftingUI } from './ui/CraftingUI';
+import { t, applyDom, setLang, botNames, Lang } from './i18n';
 import { Bot } from './entities/Bot';
 import { CargoPlane } from './entities/CargoPlane';
 import { ZoneManager } from './zone/ZoneManager';
@@ -20,12 +22,8 @@ class Game {
   hud: HUD;
 
   bots: Bot[] = [];
-  botNames: string[] = [
-    '블록장인', '모래성', '고수플레이어', '치킨사냥꾼', '복셀마스터',
-    '저격의달인', '파밍왕', '돌격대장', '존버장인', '다이아곡괭이',
-    '돌도끼', '밤샘러', '다리지기', '초보탈출', '황금사과',
-    '보급상자털이', '에임요정', '자기장러너', '최후의생존자'
-  ];
+  crafting: CraftingUI;
+  grenades: { mesh: THREE.Mesh; vel: THREE.Vector3; fuse: number }[] = [];
 
   // Visual Tracers & Particles
   tracers: { mesh: THREE.Line; age: number; maxAge: number }[] = [];
@@ -90,6 +88,11 @@ class Game {
     this.player.weapons.resetInventory();
     this.player.weapons.selectWeapon('PICKAXE'); // Start unarmed with pickaxe!
     this.hud = new HUD(this.player, this.zone, this.world);
+    this.crafting = new CraftingUI(
+      () => this.player,
+      () => this.isGameActive && this.player.isAlive && !this.player.inPlane && !this.player.isAirborne,
+      () => this.requestLock()
+    );
 
     this.setupEvents();
     this.initBots();
@@ -105,7 +108,8 @@ class Game {
 
     // Initialize 19 bots aboard the Cargo Plane
     for (let i = 0; i < 19; i++) {
-      const name = this.botNames[i % this.botNames.length];
+      const names = botNames();
+      const name = names[i % names.length];
       const bot = new Bot(i, name, this.scene, this.world, this.cargoPlane.getPosition());
       bot.inPlane = true;
       bot.mesh.visible = false;
@@ -127,20 +131,12 @@ class Game {
     const btnRestartWin = document.getElementById('btn-restart-win')!;
     const btnRestartLose = document.getElementById('btn-restart-lose')!;
 
-    const requestLock = () => {
-      try {
-        const lockRes = this.canvas.requestPointerLock() as unknown as Promise<void> | undefined;
-        if (lockRes && typeof lockRes.catch === 'function') {
-          lockRes.catch(() => {});
-        }
-      } catch (e) {
-        // Fallback
-      }
-    };
-
+    const requestLock = () => this.requestLock();
     const startGameAction = (isRestart: boolean = false) => {
-      console.log('Starting match: C-130 수송기 비행 시작!');
       startModal.style.display = 'none';
+      // Bot names follow the chosen language
+      const names = botNames();
+      this.bots.forEach((b, i) => { b.name = names[i % names.length]; });
       document.getElementById('victory-screen')!.style.display = 'none';
       document.getElementById('gameover-screen')!.style.display = 'none';
 
@@ -175,6 +171,9 @@ class Game {
     };
 
     btnStart.addEventListener('click', () => startGameAction(false));
+    document.querySelectorAll<HTMLElement>('[data-lang]').forEach(btn => {
+      btn.addEventListener('click', () => setLang(btn.dataset.lang as Lang));
+    });
     btnRestartWin.addEventListener('click', () => {
       this.restartMatch();
       startGameAction(true);
@@ -186,6 +185,7 @@ class Game {
 
     // Also lock pointer when clicking canvas during active game
     this.canvas.addEventListener('click', () => {
+      if (this.crafting.isOpen) return;
       if (this.isGameActive && document.pointerLockElement !== this.canvas && document.pointerLockElement !== document.body) {
         requestLock();
       }
@@ -197,7 +197,7 @@ class Game {
 
     // Universal Mouse Look (Pointer Lock + Window tracking fallback)
     window.addEventListener('mousemove', (e) => {
-      if (!this.isGameActive) return;
+      if (!this.isGameActive || this.crafting.isOpen) return;
 
       const isLocked = (document.pointerLockElement === this.canvas || document.pointerLockElement === document.body);
 
@@ -229,6 +229,7 @@ class Game {
 
     // Mouse Clicks
     window.addEventListener('mousedown', (e) => {
+      if (this.crafting.isOpen) return;
       isMouseDown = true;
       lastX = e.clientX;
       lastY = e.clientY;
@@ -339,11 +340,11 @@ class Game {
     if (closestBot) {
       sounds.playHit();
       this.triggerHitCrosshair();
-      const isDead = closestBot.takeDamage(damage, '당신');
+      const isDead = closestBot.takeDamage(damage, t('kf.player'));
 
       if (isDead) {
         this.player.kills++;
-        this.hud.addKillMessage('플레이어', closestBot.name, this.player.weapons.getActiveWeapon().name);
+        this.hud.addKillMessage(t('kf.player'), closestBot.name, this.player.weapons.getActiveWeapon().name);
       }
     } else {
       // 2. Hit the voxel world
@@ -353,9 +354,12 @@ class Game {
         // Pickaxe mines blocks (and gives them back for building); heavy rounds also break them
         const isPickaxe = this.player.weapons.activeType === 'PICKAXE';
         if (isPickaxe || damage >= 40) {
-          const broke = this.world.breakBlock(blockRay.blockPos.x, blockRay.blockPos.y, blockRay.blockPos.z);
+          const bp = blockRay.blockPos;
+          const blockType = this.world.getBlock(bp.x, bp.y, bp.z);
+          const broke = this.world.breakBlock(bp.x, bp.y, bp.z);
           if (broke && isPickaxe) {
             this.player.weapons.addConsumable('BLOCK', 1);
+            this.player.gainFromBlock(blockType);
           }
         }
         this.spawnBlockParticles(hitPoint, 0x8b5a2b);
@@ -388,7 +392,7 @@ class Game {
       this.player.takeDamage(damage, true, shooterName);
 
       if (!this.player.isAlive) {
-        this.hud.addKillMessage(shooterName, '플레이어', '총기');
+        this.hud.addKillMessage(shooterName, t('kf.player'), t('kf.gun'));
       }
     } else {
       // Check if it hits another bot
@@ -399,7 +403,7 @@ class Game {
           hitPoint = otherCenter;
           const dead = other.takeDamage(damage, shooterName);
           if (dead) {
-            this.hud.addKillMessage(shooterName, other.name, '총기');
+            this.hud.addKillMessage(shooterName, other.name, t('kf.gun'));
           }
           break;
         }
@@ -408,6 +412,106 @@ class Game {
 
     this.createBulletTracer(from, hitPoint);
   };
+
+  private requestLock() {
+    try {
+      const lockRes = this.canvas.requestPointerLock() as unknown as Promise<void> | undefined;
+      if (lockRes && typeof lockRes.catch === 'function') lockRes.catch(() => {});
+    } catch {
+      // pointer lock unavailable; the mouse-move fallback still works
+    }
+  }
+
+  private throwGrenade = (origin: THREE.Vector3, dir: THREE.Vector3) => {
+    const mesh = new THREE.Mesh(
+      new THREE.SphereGeometry(0.14, 10, 8),
+      new THREE.MeshLambertMaterial({ color: 0x3f6212 })
+    );
+    mesh.position.copy(origin).addScaledVector(dir, 0.6);
+    mesh.castShadow = true;
+    this.scene.add(mesh);
+    const vel = dir.clone().multiplyScalar(17).add(new THREE.Vector3(0, 4, 0));
+    this.grenades.push({ mesh, vel, fuse: 2.5 });
+  };
+
+  // Simple bouncing physics against the voxel grid, then a block-breaking blast
+  private updateGrenades(delta: number) {
+    for (let i = this.grenades.length - 1; i >= 0; i--) {
+      const g = this.grenades[i];
+      g.fuse -= delta;
+      g.vel.y -= 22 * delta;
+      const p = g.mesh.position;
+      const steps = 3;
+      for (let s = 0; s < steps; s++) {
+        const d = delta / steps;
+        for (const axis of ['x', 'y', 'z'] as const) {
+          const old = p[axis];
+          p[axis] += g.vel[axis] * d;
+          if (this.world.hasBlock(Math.floor(p.x), Math.floor(p.y), Math.floor(p.z))) {
+            p[axis] = old;
+            g.vel[axis] *= -0.35;
+            if (axis === 'y') {
+              g.vel.x *= 0.7;
+              g.vel.z *= 0.7;
+            }
+          }
+        }
+      }
+      if (p.y < World.WATER_LEVEL - 0.5) g.vel.multiplyScalar(0.9);
+      if (g.fuse <= 0) {
+        this.explode(p.clone());
+        this.scene.remove(g.mesh);
+        this.grenades.splice(i, 1);
+      }
+    }
+  }
+
+  private explode(at: THREE.Vector3) {
+    const R = 5.5;
+    const dist = at.distanceTo(this.player.position);
+    sounds.playExplosion(Math.max(0, 1 - dist / 90));
+
+    // Flash + debris
+    const flash = new THREE.PointLight(0xffaa33, 6, 14);
+    flash.position.copy(at);
+    this.scene.add(flash);
+    setTimeout(() => this.scene.remove(flash), 120);
+    for (let k = 0; k < 4; k++) this.spawnBlockParticles(at, k % 2 ? 0x6b7280 : 0xf97316);
+
+    // Blast hole (keeps the sea floor)
+    const br = 2.3;
+    for (let x = Math.floor(at.x - br); x <= Math.floor(at.x + br); x++) {
+      for (let y = Math.floor(at.y - br); y <= Math.floor(at.y + br); y++) {
+        for (let z = Math.floor(at.z - br); z <= Math.floor(at.z + br); z++) {
+          if (Math.hypot(x + 0.5 - at.x, y + 0.5 - at.y, z + 0.5 - at.z) <= br && y > 1) {
+            this.world.breakBlock(x, y, z, true);
+          }
+        }
+      }
+    }
+
+    const blastDamage = (pos: THREE.Vector3) => {
+      const d = pos.distanceTo(at);
+      return d >= R ? 0 : 110 * (1 - d / R);
+    };
+    const weapon = t('kf.explosion');
+    for (const bot of this.bots) {
+      if (!bot.isAlive || bot.inPlane) continue;
+      const dmg = blastDamage(bot.position.clone().add(new THREE.Vector3(0, 0.9, 0)));
+      if (dmg <= 0) continue;
+      if (bot.takeDamage(dmg, t('kf.player'))) {
+        this.player.kills++;
+        this.hud.addKillMessage(t('kf.player'), bot.name, weapon);
+      } else {
+        this.triggerHitCrosshair();
+      }
+    }
+    const selfDmg = blastDamage(this.player.position.clone().add(new THREE.Vector3(0, 0.9, 0)));
+    if (selfDmg > 0 && !this.player.inPlane) {
+      this.player.takeDamage(selfDmg, true, t('kf.fall'));
+      if (!this.player.isAlive) this.hud.addKillMessage(t('kf.player'), t('kf.player'), weapon);
+    }
+  }
 
   private triggerHitCrosshair() {
     const ch = document.getElementById('crosshair');
@@ -466,11 +570,10 @@ class Game {
     const causeEl = document.getElementById('gameover-cause')!;
 
     rankEl.textContent = `${this.aliveCount}`;
-    trackMatchEnd(killer === '자기장' ? 'zone' : 'death', this.aliveCount, this.player.kills);
+    trackMatchEnd(killer === SRC_ZONE ? 'zone' : 'death', this.aliveCount, this.player.kills);
     killsEl.textContent = `${this.player.kills}`;
-    causeEl.textContent = killer === '자기장'
-      ? '자기장 밖에서 쓰러졌습니다.'
-      : `${killer}의 공격에 쓰러졌습니다.`;
+    causeEl.textContent = killer === SRC_ZONE ? t('over.zone') : t('over.killed', { name: killer });
+    this.crafting.close(false);
     document.getElementById('scope-overlay')!.style.display = 'none';
     gameoverScreen.style.display = 'flex';
   }
@@ -480,6 +583,7 @@ class Game {
     if (!this.matchOver && this.aliveCount <= 1 && this.player.isAlive) {
       this.matchOver = true;
       this.isGameActive = false;
+      this.crafting.close(false);
       sounds.playVictory();
       document.getElementById('scope-overlay')!.style.display = 'none';
       document.exitPointerLock();
@@ -505,7 +609,9 @@ class Game {
     this.hud.clearKillfeed();
 
     // Reset player
-    this.player.lastDamageSource = '자기장';
+    this.player.lastDamageSource = SRC_ZONE;
+    this.grenades.forEach(g => this.scene.remove(g.mesh));
+    this.grenades = [];
     this.player.isMouseDown = false;
     this.player.isRightMouseDown = false;
     this.camera.fov = 75;
@@ -573,7 +679,9 @@ class Game {
       this.zone.update(delta);
 
       // 3. Update Player
-      this.player.update(delta, this.zone, this.onPlayerShoot);
+      this.player.update(delta, this.zone, this.onPlayerShoot, this.throwGrenade);
+      this.updateGrenades(delta);
+      this.crafting.update();
 
       // 4. Update Bots (a crouched / prone player is harder to spot and to hit)
       Bot.playerAimHeight = this.player.aimHeight;
@@ -582,8 +690,8 @@ class Game {
       for (const bot of this.bots) {
         if (bot.isAlive) {
           bot.update(delta, this.player.position, this.bots, this.zone, this.onBotShoot);
-          if (!bot.isAlive && bot.killedBy === '자기장') {
-            this.hud.addKillMessage('자기장', bot.name, '블루존');
+          if (!bot.isAlive && bot.killedBy === SRC_ZONE) {
+            this.hud.addKillMessage(t('kf.zone'), bot.name, t('kf.blueZone'));
           }
         }
         if (bot.isAlive) currentAlive++;
@@ -591,8 +699,8 @@ class Game {
 
       // Player died this frame (gunfire or blue zone)
       if (!this.player.isAlive) {
-        if (this.player.lastDamageSource === '자기장') {
-          this.hud.addKillMessage('자기장', '플레이어', '블루존');
+        if (this.player.lastDamageSource === SRC_ZONE) {
+          this.hud.addKillMessage(t('kf.zone'), t('kf.player'), t('kf.blueZone'));
         }
         this.handlePlayerDeath(this.player.lastDamageSource);
       }
@@ -640,6 +748,7 @@ class Game {
 
 // Start game
 function initGame() {
+  applyDom();
   initAnalytics();
   console.log('[BlockBattle] Initializing game instance...');
   try {
@@ -651,11 +760,11 @@ function initGame() {
     const btn = document.getElementById('btn-start') as HTMLButtonElement | null;
     if (btn) {
       btn.disabled = true;
-      btn.textContent = 'WebGL을 사용할 수 없습니다';
+      btn.textContent = t('webgl.btn');
     }
     const p = document.querySelector('#start-screen p');
     if (p) {
-      p.innerHTML = '브라우저에서 WebGL(하드웨어 가속)이 꺼져 있어 게임을 실행할 수 없습니다.<br>브라우저 설정에서 하드웨어 가속을 켠 뒤 새로고침하세요.';
+      p.innerHTML = t('webgl.desc');
     }
   }
 }

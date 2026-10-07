@@ -1,5 +1,11 @@
 import * as THREE from 'three';
-import { World, LootItemType, isScope } from '../world/World';
+import { World, GunType, isGun } from '../world/World';
+import { SRC_ZONE } from './Player';
+
+// Bots fire on a fixed cadence, so per-shot damage stands in for each gun's strength
+const BOT_DAMAGE: { [key in GunType]: number } = {
+  PISTOL: 14, SHOTGUN: 22, SMG: 13, RIFLE: 16, LMG: 16, DMR: 30, SNIPER: 55, CROSSBOW: 40
+};
 import { ZoneManager } from '../zone/ZoneManager';
 
 export class Bot {
@@ -29,7 +35,7 @@ export class Bot {
   maxHealth: number = 100;
   isAlive: boolean = true;
   hasWeapon: boolean = false;
-  weapon: LootItemType | null = null;
+  weapon: GunType | null = null;
 
   // Movement & Physics
   position: THREE.Vector3;
@@ -224,7 +230,7 @@ export class Bot {
     if (!zone.isInsideBlueZone(this.position.x, this.position.z)) {
       this.health -= zone.getCurrentDPS() * delta;
       if (this.health <= 0) {
-        this.die('자기장');
+        this.die(SRC_ZONE);
         return;
       }
     }
@@ -342,7 +348,7 @@ export class Bot {
 
     // 1. Check Ground Loot Items (Weapons in houses/barracks)
     for (const item of this.world.groundItems) {
-      if (item.picked || isScope(item.type)) continue; // bots don't use scopes
+      if (item.picked || !isGun(item.type)) continue; // bots only go for guns
       const d = this.position.distanceTo(item.position);
       if (d < minD) {
         minD = d;
@@ -377,13 +383,13 @@ export class Bot {
       // If no loot found within 55m, bot scavenges for a basic weapon after 6s
       this.lootSearchTimer += 0.5;
       if (this.lootSearchTimer > 6.0) {
-        const fallback: LootItemType[] = ['PISTOL', 'SHOTGUN', 'RIFLE'];
+        const fallback: GunType[] = ['PISTOL', 'SHOTGUN', 'RIFLE', 'SMG'];
         this.equipWeapon(fallback[Math.floor(Math.random() * fallback.length)]);
       }
     }
   }
 
-  private equipWeapon(type: LootItemType) {
+  private equipWeapon(type: GunType) {
     this.hasWeapon = true;
     this.weapon = type;
     this.gunMesh.visible = true;
@@ -393,6 +399,8 @@ export class Bot {
     if (type === 'SNIPER') mat.color.setHex(0x2e3a1f);
     else if (type === 'SHOTGUN') mat.color.setHex(0x78350f);
     else if (type === 'RIFLE') mat.color.setHex(0x1e3a24);
+    else if (type === 'LMG') mat.color.setHex(0x57534e);
+    else if (type === 'DMR' || type === 'CROSSBOW') mat.color.setHex(0x8b6f47);
     else mat.color.setHex(0x1e293b);
 
     this.state = 'WANDER';
@@ -419,23 +427,18 @@ export class Bot {
         const item = this.targetLoot.ref;
         item.picked = true;
         item.mesh.visible = false;
-        const wType: LootItemType = (item.type === 'MEDKIT' || item.type === 'ARMOR' || item.type === 'AMMO')
-          ? 'PISTOL'
-          : item.type;
-        this.equipWeapon(wType);
+        this.equipWeapon(isGun(item.type) ? item.type : 'PISTOL');
       } else if (this.targetLoot.type === 'CRATE') {
         const crate = this.targetLoot.ref;
         crate.opened = true;
         crate.mesh.scale.set(0.01, 0.01, 0.01);
-        const wType: LootItemType = (crate.lootType === 'MEDKIT' || crate.lootType === 'ARMOR' || isScope(crate.lootType))
-          ? 'RIFLE'
-          : crate.lootType;
-        this.equipWeapon(wType);
+        this.equipWeapon(isGun(crate.lootType) ? crate.lootType : 'RIFLE');
       } else if (this.targetLoot.type === 'DEATH_CRATE') {
         const dc = this.targetLoot.ref;
         dc.opened = true;
         dc.mesh.visible = false;
-        this.equipWeapon(dc.weapons[0] || 'RIFLE');
+        const w = dc.weapons[0];
+        this.equipWeapon(w && isGun(w) ? w : 'RIFLE');
       }
       return;
     }
@@ -531,7 +534,7 @@ export class Bot {
       dir.normalize();
 
       const shootOrigin = this.position.clone().add(new THREE.Vector3(0, 1.2, 0));
-      const damage = this.weapon === 'SNIPER' ? 55 : (this.weapon === 'SHOTGUN' ? 22 : 16);
+      const damage = BOT_DAMAGE[this.weapon || 'PISTOL'];
 
       onShootCallback(shootOrigin, dir, damage, this.name);
     }
