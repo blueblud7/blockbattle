@@ -1,6 +1,6 @@
 // Privacy-friendly play statistics via GoatCounter (no cookies, no personal data).
 // Set GOATCOUNTER_CODE to the site code chosen at goatcounter.com signup; empty = disabled.
-const GOATCOUNTER_CODE = '';
+const GOATCOUNTER_CODE = 'blockbattle';
 
 interface GoatCounter {
   count?: (vars: { path: string; title?: string; event?: boolean }) => void;
