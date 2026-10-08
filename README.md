@@ -1,6 +1,6 @@
 # 🎮 BlockBattle
 
-A **voxel battle royale** in the browser: 20 players (you + 19 bots) drop onto a block island, loot villages, **mine resources and craft gear**, and fight inside a shrinking zone. No install needed.
+A **voxel battle royale** in the browser: you + 1–100 AI bots (Easy / Normal / Hard / Hell) drop onto a block island, loot villages, **mine resources and craft gear**, and fight inside a shrinking zone. No install needed.
 
 👉 **Play: [https://blueblud7.github.io/blockbattle/](https://blueblud7.github.io/blockbattle/)**
 

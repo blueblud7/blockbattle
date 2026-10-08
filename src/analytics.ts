@@ -31,9 +31,11 @@ function minutesBucket(ms: number): string {
   return '10m+';
 }
 
-export function trackMatchStart(isRestart: boolean) {
+export function trackMatchStart(isRestart: boolean, difficulty: string, bots: number) {
   matchStartedAt = performance.now();
   track(isRestart ? 'match-restart' : 'match-start', isRestart ? 'Restart' : 'Start');
+  track(`difficulty/${difficulty}`, 'Difficulty');
+  track(`bots/${bots <= 19 ? '1-19' : bots <= 49 ? '20-49' : bots <= 99 ? '50-99' : '100'}`, 'AI opponents');
 }
 
 export function trackMatchEnd(result: 'win' | 'death' | 'zone', rank: number, kills: number) {

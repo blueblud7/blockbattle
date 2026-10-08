@@ -5,9 +5,19 @@ type Dict = { [key: string]: string };
 
 const en: Dict = {
   'title': 'BlockBattle - Voxel Battle Royale',
-  'start.desc': 'A 20-player battle royale on an island made of blocks!<br>Loot crates, mine resources, craft gear, outrun the zone and be the last one standing.',
+  'start.desc': 'A battle royale on an island made of blocks!<br>Loot crates, mine resources, craft gear, outrun the zone and be the last one standing.',
   'start.play': 'Drop In',
   'start.lang': 'Language',
+  'start.bots': 'AI opponents',
+  'start.diff': 'Difficulty',
+  'diff.easy': 'Easy',
+  'diff.normal': 'Normal',
+  'diff.hard': 'Hard',
+  'diff.hell': 'Hell',
+  'diff.easyDesc': 'Bots spot you late, miss a lot and go down fast.',
+  'diff.normalDesc': 'The standard match.',
+  'diff.hardDesc': 'Sharper aim, quicker reactions, tougher bots.',
+  'diff.hellDesc': 'Bots hunt YOU: near-perfect aim, instant reactions, 180 HP. Good luck.',
   'key.move': 'Move (glide in the air / walk on the ground)',
   'key.jump': 'Jump / open parachute in the air',
   'key.lmb': 'Left click',
@@ -149,9 +159,19 @@ const en: Dict = {
 
 const ko: Dict = {
   'title': 'BlockBattle - 블록 배틀로얄',
-  'start.desc': '블록으로 만들어진 섬에서 펼쳐지는 20인 배틀로얄!<br>상자를 파밍하고, 자원을 캐서 장비를 만들고, 자기장을 피해 최후의 1인이 되세요.',
+  'start.desc': '블록으로 만들어진 섬에서 펼쳐지는 배틀로얄!<br>상자를 파밍하고, 자원을 캐서 장비를 만들고, 자기장을 피해 최후의 1인이 되세요.',
   'start.play': '전장 강하 시작',
   'start.lang': '언어',
+  'start.bots': 'AI 참가자 수',
+  'start.diff': '난이도',
+  'diff.easy': '쉬움',
+  'diff.normal': '보통',
+  'diff.hard': '어려움',
+  'diff.hell': '지옥',
+  'diff.easyDesc': '봇이 늦게 발견하고, 자주 빗나가고, 금방 쓰러집니다.',
+  'diff.normalDesc': '기본 난이도입니다.',
+  'diff.hardDesc': '조준이 정확하고 반응이 빠르며 체력도 높습니다.',
+  'diff.hellDesc': '봇들이 당신만 노립니다. 거의 백발백중, 즉각 반응, 체력 180. 행운을 빕니다.',
   'key.move': '이동 (공중 낙하 / 지상 이동)',
   'key.jump': '점프 / 공중에서 낙하산 펼치기',
   'key.lmb': '마우스 좌클릭',
@@ -335,6 +355,13 @@ export function t(key: string, vars?: { [k: string]: string | number }): string 
 
 export function botNames(): string[] {
   return BOT_NAMES[current];
+}
+
+/** Name for bot #i; once the name list runs out, names repeat with a number (BlockSmith 2). */
+export function botName(i: number): string {
+  const names = BOT_NAMES[current];
+  const round = Math.floor(i / names.length);
+  return round === 0 ? names[i % names.length] : `${names[i % names.length]} ${round + 1}`;
 }
 
 /** Fill every [data-i18n] (text) and [data-i18n-html] (markup) element on the page. */

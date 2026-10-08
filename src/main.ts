@@ -3,8 +3,8 @@ import * as THREE from 'three';
 import { World } from './world/World';
 import { Player, SRC_ZONE } from './entities/Player';
 import { CraftingUI } from './ui/CraftingUI';
-import { t, applyDom, setLang, botNames, Lang } from './i18n';
-import { Bot } from './entities/Bot';
+import { t, applyDom, setLang, botName, Lang } from './i18n';
+import { Bot, Difficulty, DIFFICULTY, DIFFICULTIES } from './entities/Bot';
 import { CargoPlane } from './entities/CargoPlane';
 import { ZoneManager } from './zone/ZoneManager';
 import { HUD } from './ui/HUD';
@@ -31,8 +31,10 @@ class Game {
 
   // Match State
   canvas: HTMLCanvasElement;
-  totalPlayers: number = 20;
-  aliveCount: number = 20;
+  botCount: number = Game.loadBotCount();
+  difficulty: Difficulty = Game.loadDifficulty();
+  totalPlayers: number = this.botCount + 1;
+  aliveCount: number = this.botCount + 1;
   isGameActive: boolean = false;
   clock: THREE.Clock = new THREE.Clock();
   sunLight: THREE.DirectionalLight;
@@ -101,22 +103,101 @@ class Game {
     requestAnimationFrame(this.loop.bind(this));
   }
 
+  static readonly MAX_BOTS = 100;
+
+  private static loadBotCount(): number {
+    try {
+      const n = parseInt(localStorage.getItem('bb-bots') ?? '', 10);
+      if (n >= 1 && n <= Game.MAX_BOTS) return n;
+    } catch {
+      // storage blocked: use the default
+    }
+    return 19;
+  }
+
+  private static loadDifficulty(): Difficulty {
+    try {
+      const d = localStorage.getItem('bb-diff') as Difficulty | null;
+      if (d && DIFFICULTIES.includes(d)) return d;
+    } catch {
+      // storage blocked: use the default
+    }
+    return 'normal';
+  }
+
+  private setDifficulty(d: Difficulty) {
+    this.difficulty = d;
+    try {
+      localStorage.setItem('bb-diff', d);
+    } catch {
+      // storage blocked: the setting just won't persist
+    }
+    document.querySelectorAll<HTMLElement>('[data-diff]').forEach(b => b.classList.toggle('active', b.dataset.diff === d));
+    const hint = document.getElementById('diff-hint');
+    if (hint) hint.textContent = t('diff.' + d + 'Desc');
+  }
+
+  /**
+   * Landing spots spread over the whole island: each bot takes the best of several
+   * candidates (farthest from spots already taken), and most candidates sit in villages.
+   */
+  private planDrops(count: number): THREE.Vector3[] {
+    const towns = World.towns;
+    const maxR = this.world.half * 0.85;
+    const spots: THREE.Vector3[] = [];
+    const randomLand = (): THREE.Vector3 | null => {
+      for (let tries = 0; tries < 30; tries++) {
+        let x: number, z: number;
+        if (Math.random() < 0.6) {
+          const tw = towns[Math.floor(Math.random() * towns.length)];
+          const a = Math.random() * Math.PI * 2, r = Math.sqrt(Math.random()) * tw.r;
+          x = tw.x + Math.cos(a) * r; z = tw.z + Math.sin(a) * r;
+        } else {
+          x = (Math.random() * 2 - 1) * maxR; z = (Math.random() * 2 - 1) * maxR;
+        }
+        if (Math.hypot(x, z) <= maxR && this.world.isLand(x, z)) return new THREE.Vector3(x, 0, z);
+      }
+      return null;
+    };
+    for (let i = 0; i < count; i++) {
+      let best: THREE.Vector3 | null = null, bestD = -1;
+      for (let c = 0; c < 10; c++) {
+        const p = randomLand();
+        if (!p) continue;
+        let d = Infinity;
+        for (const s of spots) d = Math.min(d, (s.x - p.x) ** 2 + (s.z - p.z) ** 2);
+        if (d > bestD) { bestD = d; best = p; }
+      }
+      spots.push(best ?? new THREE.Vector3(0, 0, 0));
+    }
+    return spots;
+  }
+
+  private setBotCount(n: number) {
+    this.botCount = Math.max(1, Math.min(Game.MAX_BOTS, Math.round(n)));
+    try {
+      localStorage.setItem('bb-bots', String(this.botCount));
+    } catch {
+      // storage blocked: the setting just won't persist
+    }
+  }
+
   private initBots() {
     // Clear existing bots
     this.bots.forEach(b => this.scene.remove(b.mesh));
     this.bots = [];
 
-    // Initialize 19 bots aboard the Cargo Plane
-    for (let i = 0; i < 19; i++) {
-      const names = botNames();
-      const name = names[i % names.length];
+    // Initialize the chosen number of bots aboard the Cargo Plane
+    for (let i = 0; i < this.botCount; i++) {
+      const name = botName(i);
       const bot = new Bot(i, name, this.scene, this.world, this.cargoPlane.getPosition());
       bot.inPlane = true;
       bot.mesh.visible = false;
       this.bots.push(bot);
     }
 
-    this.aliveCount = 20;
+    this.totalPlayers = this.botCount + 1;
+    this.aliveCount = this.totalPlayers;
   }
 
   private setupEvents() {
@@ -134,9 +215,10 @@ class Game {
     const requestLock = () => this.requestLock();
     const startGameAction = (isRestart: boolean = false) => {
       startModal.style.display = 'none';
+      if (this.bots.length !== this.botCount) this.initBots();
+      document.getElementById('alive-count')!.textContent = `${this.aliveCount}`;
       // Bot names follow the chosen language
-      const names = botNames();
-      this.bots.forEach((b, i) => { b.name = names[i % names.length]; });
+      this.bots.forEach((b, i) => { b.name = botName(i); });
       document.getElementById('victory-screen')!.style.display = 'none';
       document.getElementById('gameover-screen')!.style.display = 'none';
 
@@ -153,26 +235,50 @@ class Game {
       this.player.weapons.resetInventory();
       this.player.weapons.selectWeapon('PICKAXE');
 
-      // Put all bots on the plane; they jump at random moments while it's over the island
-      const [t0, t1] = this.cargoPlane.getTimeWindowOver(this.world.half * 0.7);
-      this.bots.forEach((bot) => {
+      // Every bot gets its own landing spot and jumps when the plane passes closest to it
+      Bot.diff = DIFFICULTY[this.difficulty];
+      const spots = this.planDrops(this.bots.length);
+      const plane = this.cargoPlane;
+      const flightTime = plane.totalDistance / plane.speed;
+      this.bots.forEach((bot, i) => {
+        const s = spots[i];
+        const along = (s.x - plane.startPos.x) * plane.flightDir.x + (s.z - plane.startPos.z) * plane.flightDir.z;
+        bot.dropTarget = s;
+        bot.health = bot.maxHealth = Bot.diff.health;
         bot.inPlane = true;
         bot.isParachuting = false;
         bot.hasWeapon = false;
         bot.gunMesh.visible = false;
         bot.mesh.visible = false;
-        bot.ejectTimer = t0 + Math.random() * (t1 - t0);
+        bot.ejectTimer = Math.min(flightTime - 0.5, Math.max(0.5, along / plane.speed + (Math.random() - 0.5) * 1.5));
       });
 
       this.isGameActive = true;
       this.matchOver = false;
-      trackMatchStart(isRestart);
+      trackMatchStart(isRestart, this.difficulty, this.botCount);
       requestLock();
     };
 
+    const botSlider = document.getElementById('bot-count') as HTMLInputElement;
+    const botVal = document.getElementById('bot-count-val')!;
+    botSlider.value = String(this.botCount);
+    botVal.textContent = String(this.botCount);
+    botSlider.addEventListener('input', () => {
+      this.setBotCount(Number(botSlider.value));
+      botVal.textContent = String(this.botCount);
+    });
+
+    document.querySelectorAll<HTMLElement>('[data-diff]').forEach(btn => {
+      btn.addEventListener('click', () => this.setDifficulty(btn.dataset.diff as Difficulty));
+    });
+    this.setDifficulty(this.difficulty);
+
     btnStart.addEventListener('click', () => startGameAction(false));
     document.querySelectorAll<HTMLElement>('[data-lang]').forEach(btn => {
-      btn.addEventListener('click', () => setLang(btn.dataset.lang as Lang));
+      btn.addEventListener('click', () => {
+        setLang(btn.dataset.lang as Lang);
+        this.setDifficulty(this.difficulty);
+      });
     });
     btnRestartWin.addEventListener('click', () => {
       this.restartMatch();
@@ -685,7 +791,9 @@ class Game {
 
       // 4. Update Bots (a crouched / prone player is harder to spot and to hit)
       Bot.playerAimHeight = this.player.aimHeight;
-      Bot.playerDetectRange = this.player.stance === 'prone' ? 20 : this.player.stance === 'crouch' ? 30 : 38;
+      const stanceSight = this.player.stance === 'prone' ? 0.53 : this.player.stance === 'crouch' ? 0.8 : 1;
+      Bot.playerDetectRange = Bot.diff.detect * stanceSight;
+      Bot.playerAlive = this.player.isAlive && !this.player.inPlane;
       let currentAlive = this.player.isAlive ? 1 : 0;
       for (const bot of this.bots) {
         if (bot.isAlive) {

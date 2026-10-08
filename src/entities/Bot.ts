@@ -8,6 +8,28 @@ const BOT_DAMAGE: { [key in GunType]: number } = {
 };
 import { ZoneManager } from '../zone/ZoneManager';
 
+export type Difficulty = 'easy' | 'normal' | 'hard' | 'hell';
+export const DIFFICULTIES: Difficulty[] = ['easy', 'normal', 'hard', 'hell'];
+
+// How bots fight the player at each difficulty (bot-vs-bot fights use BRAWL so the field thins out slowly)
+interface DiffParams {
+  detect: number;              // how far a standing player is spotted
+  reaction: number;            // delay before the first shot at a new target
+  cooldown: [number, number];  // time between shots
+  spread: number;              // aim error
+  damage: number;              // multiplier on BOT_DAMAGE
+  health: number;
+  speed: number;
+  huntPlayer: boolean;         // prefer the player over closer bots and roam toward them
+}
+export const DIFFICULTY: { [key in Difficulty]: DiffParams } = {
+  easy:   { detect: 26, reaction: 1.2,  cooldown: [0.9, 1.6],  spread: 0.22,  damage: 0.6,  health: 80,  speed: 4.0, huntPlayer: false },
+  normal: { detect: 38, reaction: 0.6,  cooldown: [0.5, 1.1],  spread: 0.12,  damage: 1.0,  health: 100, speed: 4.4, huntPlayer: false },
+  hard:   { detect: 48, reaction: 0.35, cooldown: [0.4, 0.8],  spread: 0.07,  damage: 1.3,  health: 130, speed: 4.9, huntPlayer: false },
+  hell:   { detect: 60, reaction: 0.12, cooldown: [0.25, 0.5], spread: 0.035, damage: 1.7,  health: 180, speed: 5.5, huntPlayer: true }
+};
+const BRAWL = { detect: 32, spread: 0.16, damage: 0.75 };
+
 export class Bot {
   id: number;
   name: string;
@@ -61,6 +83,11 @@ export class Bot {
   // Set by the game each frame from the player's stance
   static playerAimHeight = 1.0;
   static playerDetectRange = 38;
+  static playerAlive = true;
+  static diff: DiffParams = DIFFICULTY.normal;
+  // Landing spot handed out by the game so bots spread over the island
+  dropTarget: THREE.Vector3 | null = null;
+  private glideSpeed = 12;
   static readonly HEIGHT = 1.8;
 
   constructor(id: number, name: string, scene: THREE.Scene, world: World, startPos: THREE.Vector3) {
@@ -203,6 +230,16 @@ export class Bot {
     this.mesh.visible = true;
     this.parachuteMesh.visible = true;
 
+    this.glideSpeed = 12;
+    if (this.dropTarget) {
+      this.targetPos.set(this.dropTarget.x, 0, this.dropTarget.z);
+      // Glide faster when the spot is far off the flight path so it is still reached
+      const fallTime = Math.max(1, (this.position.y - this.world.getSurfaceHeight(this.dropTarget.x, this.dropTarget.z)) / 8.5);
+      const dist = Math.hypot(this.dropTarget.x - this.position.x, this.dropTarget.z - this.position.z);
+      this.glideSpeed = Math.min(30, Math.max(12, (dist / fallTime) * 1.15));
+      return;
+    }
+
     // Pick a landing spot near the drop point, kept on the island
     const tx = this.position.x + (Math.random() - 0.5) * 120;
     const tz = this.position.z + (Math.random() - 0.5) * 120;
@@ -265,7 +302,7 @@ export class Bot {
     const dist = Math.sqrt(dx * dx + dz * dz);
 
     if (dist > 1) {
-      const glideSpeed = 12 * delta;
+      const glideSpeed = Math.min(this.glideSpeed * delta, dist);
       this.position.x += (dx / dist) * glideSpeed;
       this.position.z += (dz / dist) * glideSpeed;
       this.mesh.rotation.y = Math.atan2(dx, dz);
@@ -311,15 +348,21 @@ export class Bot {
       );
     }
 
+    // Hell: armed bots roam toward the player
+    if (Bot.diff.huntPlayer && Bot.playerAlive && Math.random() < 0.3) {
+      this.targetPos.set(playerPos.x + (Math.random() - 0.5) * 20, 0, playerPos.z + (Math.random() - 0.5) * 20);
+    }
+
     // 3. Enemy detection (Player or other Bots)
+    const prev = this.targetEntity;
     let closestTarget: { position: THREE.Vector3; isPlayer: boolean; id?: number } | null = null;
-    let closestDist = 38; // Bot visual range
+    let closestDist = BRAWL.detect; // Bot visual range for other bots
 
     // Check Player
     const distToPlayer = this.position.distanceTo(playerPos);
-    if (distToPlayer < Math.min(closestDist, Bot.playerDetectRange) && this.canSee(playerPos, Bot.playerAimHeight + 0.1)) {
+    if (Bot.playerAlive && distToPlayer < Bot.playerDetectRange && this.canSee(playerPos, Bot.playerAimHeight + 0.1)) {
       closestTarget = { position: playerPos, isPlayer: true };
-      closestDist = distToPlayer;
+      closestDist = Bot.diff.huntPlayer ? 0 : Math.min(distToPlayer, BRAWL.detect);
     }
 
     // Check Other Bots
@@ -333,6 +376,9 @@ export class Bot {
     }
 
     if (closestTarget) {
+      // Give the target a moment to react before the first shot
+      const same = prev && prev.isPlayer === closestTarget.isPlayer && prev.id === closestTarget.id;
+      if (!same) this.shootTimer = Math.max(this.shootTimer, closestTarget.isPlayer ? Bot.diff.reaction : 0.6);
       this.state = 'COMBAT';
       this.targetEntity = closestTarget;
     } else {
@@ -458,7 +504,7 @@ export class Bot {
     const stopDist = this.state === 'COMBAT' ? 6 : 1.0;
 
     if (dist > stopDist) {
-      const speed = inWater ? 3.2 : 4.4;
+      const speed = inWater ? 3.2 : Bot.diff.speed;
       const stepX = (dx / dist) * speed * delta;
       const stepZ = (dz / dist) * speed * delta;
       const before = this.position.clone();
@@ -520,21 +566,24 @@ export class Bot {
     this.shootTimer -= delta;
     const aimH = this.targetEntity.isPlayer ? Bot.playerAimHeight : 1.0;
     if (this.shootTimer <= 0 && dist < 45 && this.canSee(targetPos, aimH + 0.1)) {
+      const vsPlayer = this.targetEntity.isPlayer;
+      const [cMin, cMax] = vsPlayer ? Bot.diff.cooldown : [0.5, 1.1];
       this.shootTimer = this.shootCooldown;
-      this.shootCooldown = 0.5 + Math.random() * 0.6;
+      this.shootCooldown = cMin + Math.random() * (cMax - cMin);
+      const spread = vsPlayer ? Bot.diff.spread : BRAWL.spread;
 
       // Shooting direction with slight inaccuracy
       const dir = new THREE.Vector3()
         .subVectors(targetPos.clone().add(new THREE.Vector3(0, aimH, 0)), this.position.clone().add(new THREE.Vector3(0, 1.2, 0)))
         .normalize();
 
-      dir.x += (Math.random() - 0.5) * 0.12;
-      dir.y += (Math.random() - 0.5) * 0.08;
-      dir.z += (Math.random() - 0.5) * 0.12;
+      dir.x += (Math.random() - 0.5) * spread;
+      dir.y += (Math.random() - 0.5) * spread * 0.67;
+      dir.z += (Math.random() - 0.5) * spread;
       dir.normalize();
 
       const shootOrigin = this.position.clone().add(new THREE.Vector3(0, 1.2, 0));
-      const damage = BOT_DAMAGE[this.weapon || 'PISTOL'];
+      const damage = BOT_DAMAGE[this.weapon || 'PISTOL'] * (vsPlayer ? Bot.diff.damage : BRAWL.damage);
 
       onShootCallback(shootOrigin, dir, damage, this.name);
     }
