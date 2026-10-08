@@ -428,6 +428,53 @@ export class SoundManager {
       offset += note.d * 0.9;
     });
   }
+
+  // Looping engine hum while driving; pitch follows speed
+  private engine: { osc: OscillatorNode; osc2: OscillatorNode; gain: GainNode; filter: BiquadFilterNode } | null = null;
+
+  startEngine(moto: boolean) {
+    this.initCtx();
+    if (!this.ctx || this.isMuted || this.engine) return;
+    const osc = this.ctx.createOscillator();
+    const osc2 = this.ctx.createOscillator();
+    const filter = this.ctx.createBiquadFilter();
+    const gain = this.ctx.createGain();
+    osc.type = 'sawtooth';
+    osc2.type = 'square';
+    osc.frequency.value = moto ? 70 : 45;
+    osc2.frequency.value = (moto ? 70 : 45) * 0.5;
+    filter.type = 'lowpass';
+    filter.frequency.value = moto ? 900 : 600;
+    gain.gain.value = 0.0001;
+    gain.gain.exponentialRampToValueAtTime(0.06, this.ctx.currentTime + 0.3);
+    osc.connect(filter);
+    osc2.connect(filter);
+    filter.connect(gain);
+    gain.connect(this.ctx.destination);
+    osc.start();
+    osc2.start();
+    this.engine = { osc, osc2, gain, filter };
+  }
+
+  setEngineSpeed(ratio: number, moto: boolean) {
+    if (!this.ctx || !this.engine) return;
+    const base = moto ? 70 : 45;
+    const f = base * (1 + Math.min(1.2, Math.abs(ratio)) * 1.6);
+    const t = this.ctx.currentTime;
+    this.engine.osc.frequency.setTargetAtTime(f, t, 0.08);
+    this.engine.osc2.frequency.setTargetAtTime(f * 0.5, t, 0.08);
+    this.engine.gain.gain.setTargetAtTime(0.05 + Math.min(1, Math.abs(ratio)) * 0.04, t, 0.1);
+  }
+
+  stopEngine() {
+    if (!this.ctx || !this.engine) return;
+    const { osc, osc2, gain } = this.engine;
+    const t = this.ctx.currentTime;
+    gain.gain.setTargetAtTime(0.0001, t, 0.08);
+    osc.stop(t + 0.4);
+    osc2.stop(t + 0.4);
+    this.engine = null;
+  }
 }
 
 export const sounds = new SoundManager();

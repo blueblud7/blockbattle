@@ -27,7 +27,7 @@ const en: Dict = {
   'key.reload': 'Reload',
   'key.slots': '1 ~ 6 / wheel',
   'key.slotsDesc': 'Switch weapons and items',
-  'key.loot': 'Open crates & pick up items',
+  'key.loot': 'Open crates, pick up items, get in / out of vehicles',
   'key.sprint': 'Sprint',
   'key.stance': 'Crouch / go prone (press again to stand)',
   'key.craft': 'Crafting menu',
@@ -154,7 +154,13 @@ const en: Dict = {
   'kf.blueZone': 'Blue zone',
   'kf.gun': 'Gun',
   'kf.explosion': 'Grenade',
-  'kf.fall': 'Explosion'
+  'kf.fall': 'Explosion',
+  'kf.vehicle': 'Roadkill',
+  'v.JEEP': 'Jeep',
+  'v.MOTO': 'Motorbike',
+  'hint.drive': '[E] Drive {name}',
+  'hint.exit': '[E] Get out · W/S drive · A/D steer · SPACE brake',
+  'toast.wrecked': '💥 Your {name} was destroyed!'
 };
 
 const ko: Dict = {
@@ -181,7 +187,7 @@ const ko: Dict = {
   'key.reload': '재장전',
   'key.slots': '1 ~ 6 / 휠',
   'key.slotsDesc': '무기 및 아이템 교체',
-  'key.loot': '상자 열기 & 아이템 줍기',
+  'key.loot': '상자 열기, 아이템 줍기, 차량 타고 내리기',
   'key.sprint': '달리기',
   'key.stance': '앉기 / 엎드리기 (다시 누르면 일어서기)',
   'key.craft': '제작 메뉴',
@@ -308,7 +314,13 @@ const ko: Dict = {
   'kf.blueZone': '블루존',
   'kf.gun': '총기',
   'kf.explosion': '수류탄',
-  'kf.fall': '폭발'
+  'kf.fall': '폭발',
+  'kf.vehicle': '차량',
+  'v.JEEP': '지프',
+  'v.MOTO': '오토바이',
+  'hint.drive': '[E] {name} 타기',
+  'hint.exit': '[E] 내리기 · W/S 주행 · A/D 방향 · SPACE 브레이크',
+  'toast.wrecked': '💥 {name}이(가) 파괴되었습니다!'
 };
 
 const DICTS: { [key in Lang]: Dict } = { en, ko };

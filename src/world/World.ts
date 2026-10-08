@@ -967,6 +967,49 @@ export class World {
   }
 
   /** Village sites, for the zone and anything else that wants to know where people gather. */
+  /** Is this column part of the gravel road network? */
+  isRoad(x: number, z: number): boolean {
+    const ix = Math.floor(x), iz = Math.floor(z);
+    return this.inBounds(ix, iz) && this.road[this.colIndex(ix, iz)] === 1;
+  }
+
+  /** Unbuilt road spots for parked vehicles: a couple in every village plus some along the roads. */
+  vehicleSpots(): { x: number; z: number; yaw: number }[] {
+    const spots: { x: number; z: number; yaw: number }[] = [];
+    const ok = (x: number, z: number) => {
+      if (!this.isRoad(x, z)) return false;
+      const alongX = this.isRoad(x + 2, z) && this.isRoad(x - 2, z);
+      const alongZ = this.isRoad(x, z + 2) && this.isRoad(x, z - 2);
+      if (!alongX && !alongZ) return false;
+      const top = this.getSurfaceHeight(x, z);
+      if (top !== this.h(x, z) + 1 || top < 5) return false;
+      return spots.every(s => Math.hypot(s.x - x, s.z - z) > 12);
+    };
+    // Face along the road: pick the axis that stays on gravel longer
+    const yawFor = (x: number, z: number) => {
+      let ax = 0, az = 0;
+      for (let d = 1; d <= 4; d++) {
+        if (this.isRoad(x + d, z) && this.isRoad(x - d, z)) ax++;
+        if (this.isRoad(x, z + d) && this.isRoad(x, z - d)) az++;
+      }
+      return (ax > az ? Math.PI / 2 : 0) + (Math.random() < 0.5 ? Math.PI : 0);
+    };
+    for (const town of TOWNS) {
+      let placed = 0;
+      for (let tries = 0; tries < 300 && placed < 2; tries++) {
+        const a = Math.random() * Math.PI * 2, d = Math.random() * (town.r + 8);
+        const x = Math.round(town.x + Math.cos(a) * d), z = Math.round(town.z + Math.sin(a) * d);
+        if (ok(x, z)) { spots.push({ x: x + 0.5, z: z + 0.5, yaw: yawFor(x, z) }); placed++; }
+      }
+    }
+    for (let tries = 0, extra = 0; tries < 3000 && extra < 12; tries++) {
+      const x = Math.round((Math.random() * 2 - 1) * this.half * 0.9), z = Math.round((Math.random() * 2 - 1) * this.half * 0.9);
+      if (TOWNS.some(tw => Math.hypot(tw.x - x, tw.z - z) < tw.r + 10)) continue;
+      if (ok(x, z)) { spots.push({ x: x + 0.5, z: z + 0.5, yaw: yawFor(x, z) }); extra++; }
+    }
+    return spots;
+  }
+
   static get towns(): ReadonlyArray<{ x: number; z: number; r: number }> {
     return TOWNS;
   }

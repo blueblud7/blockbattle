@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import type { Vehicle } from './Vehicle';
 import { World, isScope, isGun, itemName, SCOPE_LEVEL } from '../world/World';
 import { WeaponManager, WeaponType, fovForZoom, ResourceType } from '../weapons/Weapon';
 import { t } from '../i18n';
@@ -46,7 +47,9 @@ export class Player {
   static readonly HEIGHT = 1.8;
   static readonly EYE_HEIGHT = 1.6;
   lastDamageSource: string = SRC_ZONE;
-  uiOpen: boolean = false; // crafting menu is open: no shooting / mouse look
+  uiOpen: boolean = false;
+  vehicle: Vehicle | null = null; // driving this
+  onInteract: (() => boolean) | null = null; // vehicle enter / exit, set by the game // crafting menu is open: no shooting / mouse look
 
   // Stance (C: crouch, Z: prone)
   stance: Stance = 'stand';
@@ -147,7 +150,7 @@ export class Player {
       if (e.code === 'Space') e.preventDefault();
 
       // Stance: C = crouch toggle, Z = prone toggle (Korean IME: ㅊ / ㅋ)
-      if (!e.repeat && !this.inPlane && !this.isAirborne) {
+      if (!e.repeat && !this.inPlane && !this.isAirborne && !this.vehicle) {
         if (e.code === 'KeyC' || k === 'c' || k === 'ㅊ') {
           this.setStance(this.stance === 'crouch' ? 'stand' : 'crouch');
         }
@@ -212,7 +215,8 @@ export class Player {
       // Interact (E or F) to loot crates & ground items
       if (!e.repeat && !this.inPlane && !this.isAirborne &&
           (e.code === 'KeyE' || e.code === 'KeyF' || k === 'e' || k === 'f' || k === 'ㄷ' || k === 'ㄹ')) {
-        this.interactLoot();
+        if (this.onInteract?.()) return;
+        if (!this.vehicle) this.interactLoot();
       }
     });
 
@@ -303,6 +307,11 @@ export class Player {
       this.takeDamage(zone.getCurrentDPS() * delta, false, SRC_ZONE);
     }
 
+    if (this.vehicle) {
+      this.updateDriving(delta);
+      return;
+    }
+
     if (this.isAirborne) {
       this.updateAirborneMovement(delta);
     } else {
@@ -368,6 +377,33 @@ export class Player {
 
     // Weapon firing
     this.handleWeaponFiring(onPlayerShoot);
+  }
+
+  // Seated in a vehicle: third-person camera orbiting it with the mouse, no weapons
+  private updateDriving(delta: number) {
+    const v = this.vehicle!;
+    this.position.copy(v.seatPosition());
+    this.velocity.set(0, 0, 0);
+    this.weapons.viewmodelGroup.visible = false;
+    this.weapons.isAiming = false;
+    for (const id of ['scope-overlay', 'reddot-overlay', 'zoom-label']) {
+      const el = document.getElementById(id);
+      if (el) el.style.display = 'none';
+    }
+    this.camera.fov += (75 - this.camera.fov) * Math.min(1, 15 * delta);
+    this.camera.updateProjectionMatrix();
+
+    const pitch = Math.max(-1.2, Math.min(0.35, this.pitch));
+    const look = new THREE.Vector3(-Math.sin(this.yaw) * Math.cos(pitch), Math.sin(pitch), -Math.cos(this.yaw) * Math.cos(pitch));
+    const pivot = v.mesh.position.clone().add(new THREE.Vector3(0, 2.2, 0));
+    const dist = v.type === 'JEEP' ? 8 : 6;
+    const cam = pivot.addScaledVector(look, -dist);
+    cam.y = Math.max(cam.y, this.world.getSurfaceHeight(cam.x, cam.z) + 0.6);
+    this.camera.position.copy(cam);
+    this.camera.rotation.set(0, 0, 0);
+    this.camera.rotation.order = 'YXZ';
+    this.camera.rotation.y = this.yaw;
+    this.camera.rotation.x = pitch;
   }
 
   private updateAirborneMovement(delta: number) {
@@ -618,6 +654,15 @@ export class Player {
   }
 
   // Interacting with Loot: Death Crates, Ground Items, Supply Crates
+  /** Distance to the closest thing E would loot, or Infinity when nothing is in reach. */
+  nearestLootDist(): number {
+    let d = Infinity;
+    for (const dc of this.world.deathCrates) if (!dc.opened) { const x = this.position.distanceTo(dc.position); if (x < 3.2) d = Math.min(d, x); }
+    for (const it of this.world.groundItems) if (!it.picked) { const x = this.position.distanceTo(it.position); if (x < 2.8) d = Math.min(d, x); }
+    for (const c of this.world.crates) if (!c.opened) { const x = this.position.distanceTo(c.position); if (x < 3.5) d = Math.min(d, x); }
+    return d;
+  }
+
   interactLoot() {
     // Loot whatever is closest (death crate, ground item or supply crate)
     let best: (() => void) | null = null;

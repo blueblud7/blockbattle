@@ -6,6 +6,7 @@ import { CraftingUI } from './ui/CraftingUI';
 import { t, applyDom, setLang, botName, Lang } from './i18n';
 import { Bot, Difficulty, DIFFICULTY, DIFFICULTIES } from './entities/Bot';
 import { CargoPlane } from './entities/CargoPlane';
+import { Vehicle } from './entities/Vehicle';
 import { ZoneManager } from './zone/ZoneManager';
 import { HUD } from './ui/HUD';
 import { sounds } from './audio/SoundManager';
@@ -22,6 +23,7 @@ class Game {
   hud: HUD;
 
   bots: Bot[] = [];
+  vehicles: Vehicle[] = [];
   crafting: CraftingUI;
   grenades: { mesh: THREE.Mesh; vel: THREE.Vector3; fuse: number }[] = [];
 
@@ -96,11 +98,164 @@ class Game {
       () => this.requestLock()
     );
 
+    this.player.onInteract = () => this.toggleVehicle();
+
     this.setupEvents();
     this.initBots();
+    this.spawnVehicles();
 
     // Start render loop
     requestAnimationFrame(this.loop.bind(this));
+  }
+
+  // ---------- Vehicles ----------
+
+  private spawnVehicles() {
+    this.vehicles.forEach(v => v.dispose());
+    this.vehicles = this.world.vehicleSpots().map(s =>
+      new Vehicle(Math.random() < 0.55 ? 'JEEP' : 'MOTO', s.x, s.z, s.yaw, this.world, this.scene));
+  }
+
+  /** Vehicle E would use: in reach and closer than any loot (loot wins ties so crates by the road still open). */
+  private nearestVehicle(maxDist: number): Vehicle | null {
+    let best: Vehicle | null = null, bestD = Math.min(maxDist, this.player.nearestLootDist());
+    for (const v of this.vehicles) {
+      if (v.destroyed || v.occupied) continue;
+      const d = Math.hypot(v.position.x - this.player.position.x, v.position.z - this.player.position.z);
+      if (d < bestD && Math.abs(v.position.y - this.player.position.y) < 2.5) { bestD = d; best = v; }
+    }
+    return best;
+  }
+
+  /** E / F: get into the nearest vehicle, or out of the current one. Returns true when handled. */
+  private toggleVehicle(): boolean {
+    const p = this.player;
+    if (!this.isGameActive || !p.isAlive || p.inPlane || p.isAirborne) return false;
+    if (p.vehicle) {
+      this.leaveVehicle();
+      return true;
+    }
+    const v = this.nearestVehicle(3.2);
+    if (!v) return false;
+    p.resetStance();
+    p.vehicle = v;
+    v.setOccupied(true);
+    p.yaw = v.yaw + Math.PI;
+    p.pitch = -0.3;
+    p.isRightMouseDown = false;
+    sounds.startEngine(v.type === 'MOTO');
+    return true;
+  }
+
+  private leaveVehicle() {
+    const p = this.player, v = p.vehicle;
+    if (!v) return;
+    p.vehicle = null;
+    v.setOccupied(false);
+    sounds.stopEngine();
+    // Step out on the driver's side, else the other side, else on the roof
+    const side = new THREE.Vector3(Math.cos(v.yaw), 0, -Math.sin(v.yaw)).multiplyScalar(v.spec.radius + 0.8);
+    const spots = [v.position.clone().add(side), v.position.clone().sub(side), v.position.clone().setY(v.position.y + v.spec.height)];
+    const spot = spots.find(s => !this.world.collidesBox(s.x, s.y, s.z, Player.RADIUS, 1.8)) ?? spots[2];
+    p.position.copy(spot);
+    this.world.unstick(p.position, Player.RADIUS, 1.8);
+    p.velocity.set(0, 0, 0);
+    p.weapons.viewmodelGroup.visible = true;
+  }
+
+  private destroyVehicle(v: Vehicle) {
+    if (this.player.vehicle === v) {
+      this.leaveVehicle();
+      this.player.showToast(t('toast.wrecked', { name: t('v.' + v.type) }));
+    }
+    // Small delay so chained wrecks pop one after another
+    setTimeout(() => this.explode(v.center), 60);
+  }
+
+  /** First vehicle the ray hits within maxDist. */
+  private vehicleHit(ray: THREE.Ray, maxDist: number): { v: Vehicle; d: number } | null {
+    let best: { v: Vehicle; d: number } | null = null;
+    const hit = new THREE.Vector3();
+    for (const v of this.vehicles) {
+      if (!ray.intersectSphere(new THREE.Sphere(v.center, v.hitRadius), hit)) continue;
+      const d = ray.origin.distanceTo(hit);
+      if (d < maxDist && (!best || d < best.d)) best = { v, d };
+    }
+    return best;
+  }
+
+  private damageVehicle(v: Vehicle, amount: number) {
+    if (v.takeDamage(amount)) this.destroyVehicle(v);
+  }
+
+  private updateVehicles(delta: number) {
+    const p = this.player;
+    for (const v of this.vehicles) {
+      if (v !== p.vehicle) {
+        v.settle(delta);
+        continue;
+      }
+      const k = p.keys;
+      const throttle = (k['KeyW'] ? 1 : 0) - (k['KeyS'] ? 1 : 0);
+      const steer = (k['KeyA'] ? 1 : 0) - (k['KeyD'] ? 1 : 0);
+      const impact = v.update(delta, throttle, steer, !!k['Space']);
+      sounds.setEngineSpeed(v.speed / v.spec.maxSpeed, v.type === 'MOTO');
+
+      // Hitting a wall hard hurts the vehicle and (less so in a jeep) the driver
+      if (impact > 10) {
+        const hurt = impact - 10;
+        p.takeDamage(hurt * (v.type === 'JEEP' ? 0.8 : 2), true, t('kf.vehicle'));
+        this.damageVehicle(v, hurt * 6);
+        if (!p.isAlive) return;
+      }
+
+      // Run over bots
+      const speed = Math.abs(v.speed);
+      if (speed > 5) {
+        for (const bot of this.bots) {
+          if (!bot.isAlive || bot.inPlane || bot.isParachuting) continue;
+          const dx = bot.position.x - v.position.x, dz = bot.position.z - v.position.z;
+          // Bumper box in the vehicle's frame (long and narrow, not a circle)
+          const f = v.forward, along = dx * f.x + dz * f.z, side = dx * f.z - dz * f.x;
+          const [halfLen, halfWide] = v.type === 'JEEP' ? [2.1, 1.3] : [1.1, 0.65];
+          if (Math.abs(along) > halfLen || Math.abs(side) > halfWide || Math.abs(bot.position.y - v.position.y) > 2) continue;
+          sounds.playHit();
+          this.triggerHitCrosshair();
+          if (bot.takeDamage(speed * 6, t('kf.player'))) {
+            p.kills++;
+            this.hud.addKillMessage(t('kf.player'), bot.name, t('kf.vehicle'));
+          } else {
+            const len = Math.hypot(dx, dz) || 1;
+            this.world.moveHorizontal(bot.position, (dx / len) * 1.2, (dz / len) * 1.2, Bot.RADIUS, Bot.HEIGHT, 1.05);
+          }
+          v.speed *= 0.7;
+          this.damageVehicle(v, 8);
+        }
+      }
+    }
+  }
+
+  private updateVehicleHud() {
+    const p = this.player, v = p.vehicle;
+    const hud = document.getElementById('vehicle-hud')!;
+    const hint = document.getElementById('interact-hint')!;
+    document.getElementById('crosshair')!.style.display = v ? 'none' : '';
+    if (v) {
+      hud.style.display = 'block';
+      const pct = Math.round((v.health / v.maxHealth) * 100);
+      document.getElementById('vehicle-name')!.textContent = `${v.type === 'JEEP' ? '🚙' : '🏍️'} ${t('v.' + v.type)}`;
+      document.getElementById('vehicle-speed')!.textContent = `${Math.round(Math.abs(v.speed) * 3.6)} km/h`;
+      const bar = document.getElementById('vehicle-hp')!;
+      bar.style.width = `${pct}%`;
+      bar.style.background = pct > 50 ? '#22c55e' : pct > 25 ? '#f59e0b' : '#ef4444';
+      hint.textContent = t('hint.exit');
+      hint.style.display = 'block';
+      return;
+    }
+    hud.style.display = 'none';
+    const near = this.isGameActive && p.isAlive && !p.inPlane && !p.isAirborne ? this.nearestVehicle(3.2) : null;
+    hint.style.display = near ? 'block' : 'none';
+    if (near) hint.textContent = t('hint.drive', { name: t('v.' + near.type) });
   }
 
   static readonly MAX_BOTS = 100;
@@ -344,6 +499,7 @@ class Game {
         requestLock();
       }
 
+      if (this.player.vehicle) return;
       if (e.button === 0) {
         this.player.isMouseDown = true;
         if (this.player.weapons.activeType === 'BLOCK') {
@@ -443,7 +599,13 @@ class Game {
       }
     }
 
-    if (closestBot) {
+    const vHit = this.vehicleHit(raycaster.ray, closestBot ? closestBotDist : (blockRay ? blockRay.distance : range));
+    if (vHit) {
+      hitPoint = origin.clone().addScaledVector(finalDir, vHit.d);
+      this.damageVehicle(vHit.v, damage);
+      this.triggerHitCrosshair();
+      this.spawnBlockParticles(hitPoint, 0x9ca3af);
+    } else if (closestBot) {
       sounds.playHit();
       this.triggerHitCrosshair();
       const isDead = closestBot.takeDamage(damage, t('kf.player'));
@@ -493,7 +655,21 @@ class Game {
     const hb = this.player.getHitbox();
     const distToPlayer = Math.sqrt(ray.distanceSqToSegment(hb.a, hb.b));
 
-    if (!this.player.inPlane && distToPlayer < hb.radius && from.distanceTo(playerCenter) < maxDist) {
+    const pv = this.player.vehicle;
+    const playerD = from.distanceTo(playerCenter);
+    const vHit = this.vehicleHit(ray, maxDist);
+    const hitsPlayer = !this.player.inPlane && distToPlayer < hb.radius && playerD < maxDist;
+
+    if (vHit && (!hitsPlayer || vHit.v === pv || vHit.d < playerD)) {
+      // Vehicles are cover; a jeep soaks most of what's aimed at its driver
+      hitPoint = from.clone().addScaledVector(dir, vHit.d);
+      this.damageVehicle(vHit.v, damage);
+      if (vHit.v === pv && this.player.vehicle === pv) {
+        const through = hitsPlayer ? 1 - pv.spec.armor : 0;
+        if (through > 0) this.player.takeDamage(damage * through, true, shooterName);
+        if (!this.player.isAlive) this.hud.addKillMessage(shooterName, t('kf.player'), t('kf.gun'));
+      }
+    } else if (hitsPlayer) {
       hitPoint = playerCenter;
       this.player.takeDamage(damage, true, shooterName);
 
@@ -611,6 +787,10 @@ class Game {
       } else {
         this.triggerHitCrosshair();
       }
+    }
+    for (const v of this.vehicles) {
+      const d = v.center.distanceTo(at);
+      if (d < R + v.hitRadius) this.damageVehicle(v, 110 * (1 - Math.max(0, d - v.hitRadius) / R) * 2.5);
     }
     const selfDmg = blastDamage(this.player.position.clone().add(new THREE.Vector3(0, 0.9, 0)));
     if (selfDmg > 0 && !this.player.inPlane) {
@@ -745,6 +925,10 @@ class Game {
     this.zone = new ZoneManager(this.scene);
     this.zone.isLand = (x, z) => this.world.isLand(x, z);
 
+    // Fresh vehicles on the roads
+    if (this.player.vehicle) this.leaveVehicle();
+    this.spawnVehicles();
+
     // Re-init Bots
     this.initBots();
     this.hud = new HUD(this.player, this.zone, this.world);
@@ -783,6 +967,7 @@ class Game {
 
       // 2. Update Zone
       this.zone.update(delta);
+      this.updateVehicles(delta);
 
       // 3. Update Player
       this.player.update(delta, this.zone, this.onPlayerShoot, this.throwGrenade);
@@ -807,6 +992,7 @@ class Game {
 
       // Player died this frame (gunfire or blue zone)
       if (!this.player.isAlive) {
+        if (this.player.vehicle) this.leaveVehicle();
         if (this.player.lastDamageSource === SRC_ZONE) {
           this.hud.addKillMessage(t('kf.zone'), t('kf.player'), t('kf.blueZone'));
         }
@@ -818,6 +1004,7 @@ class Game {
 
       // 5. Update HUD
       this.hud.update(this.aliveCount, this.bots);
+      this.updateVehicleHud();
 
       // 6. Update Tracers
       for (let i = this.tracers.length - 1; i >= 0; i--) {
@@ -862,7 +1049,7 @@ function initGame() {
   try {
     const game = new Game();
     // Dev-only handle for debugging/automated play-testing (stripped from production builds)
-    if (import.meta.env.DEV) (window as unknown as { __game: Game }).__game = game;
+    if (import.meta.env.DEV) Object.assign(window, { __game: game, __THREE: THREE });
   } catch (err) {
     console.error(err);
     const btn = document.getElementById('btn-start') as HTMLButtonElement | null;

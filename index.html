@@ -639,6 +639,20 @@
     .diff-switch button.active { background: #f59e0b; color: #111; border-color: #f59e0b; font-weight: 700; }
     .diff-switch button[data-diff="hell"].active { background: #dc2626; border-color: #dc2626; color: #fff; }
     #diff-hint { font-size: 13px; color: #94a3b8; margin: 6px 0 2px; min-height: 1.2em; }
+    #interact-hint {
+      display: none; position: absolute; left: 50%; bottom: 182px; transform: translateX(-50%);
+      background: rgba(15, 23, 42, 0.75); color: #fde68a; padding: 6px 14px; border-radius: 8px;
+      font-size: 14px; font-weight: 600; white-space: nowrap; pointer-events: none; text-shadow: 0 1px 2px #000;
+      max-width: calc(100vw - 32px); overflow: hidden; text-overflow: ellipsis;
+    }
+    #vehicle-hud {
+      display: none; position: absolute; left: 50%; bottom: 120px; transform: translateX(-50%);
+      width: 240px; background: rgba(15, 23, 42, 0.75); border-radius: 10px; padding: 8px 12px; pointer-events: none;
+    }
+    #vehicle-hud .vh-row { display: flex; justify-content: space-between; color: #e2e8f0; font-weight: 700; font-size: 15px; margin-bottom: 6px; }
+    #vehicle-speed { color: #fbbf24; font-variant-numeric: tabular-nums; }
+    #vehicle-hud .vh-bar { height: 8px; background: rgba(255,255,255,0.15); border-radius: 4px; overflow: hidden; }
+    #vehicle-hp { height: 100%; width: 100%; background: #22c55e; transition: width 0.2s; }
     .bot-count { display: flex; align-items: center; justify-content: center; gap: 10px; margin: 4px 0 12px; font-size: 15px; color: #e2e8f0; }
     .bot-count input { width: min(260px, 50vw); accent-color: #f59e0b; cursor: pointer; }
     #bot-count-val { min-width: 2.5em; font-weight: 700; color: #f59e0b; text-align: left; }
@@ -751,6 +765,11 @@
 
     <!-- Crosshair -->
     <div id="crosshair"></div>
+    <div id="interact-hint"></div>
+    <div id="vehicle-hud">
+      <div class="vh-row"><span id="vehicle-name"></span><span id="vehicle-speed"></span></div>
+      <div class="vh-bar"><div id="vehicle-hp"></div></div>
+    </div>
 
     <!-- Parachute Drop Alert -->
     <div id="drop-prompt">

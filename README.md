@@ -21,7 +21,8 @@ Desktop Chrome / Edge / Firefox / Safari with keyboard + mouse (no mobile). Engl
 | **Right click** | Aim (zooms by the mounted scope) / place block |
 | **1 ~ 6 / wheel** | Switch slots (pickaxe, 2 guns, medkit, blocks, grenades) |
 | **R** | Reload |
-| **E or F** | Open crates & pick up items |
+| **E or F** | Open crates, pick up items, get in / out of vehicles |
+| **W S / A D / SPACE** (driving) | Throttle & reverse / steer / brake |
 | **G** | Grenade |
 | **Q** | Crafting menu |
 
@@ -39,7 +40,9 @@ Desktop Chrome / Edge / Firefox / Safari with keyboard + mouse (no mobile). Engl
   | Sniper Rifle | 2x | 8x |
 
 - **Mining & crafting (Minecraft-style)** — the pickaxe gives building blocks plus resources: 🪵 wood (trees, planks), 🪨 stone (rocks, gravel), ⛓️ iron (rusty ore in boulders and underground), 🌿 fiber (leaves). Press **Q** to craft blocks, medkits, ammo, grenades, an iron pickaxe, armor, a crossbow, a pistol, an SMG or a 2x scope.
+- **Vehicles** — jeeps and motorbikes parked on village streets and along the roads. Fastest on gravel roads, slower off-road. A jeep soaks most bullets aimed at its driver; a motorbike is quicker but leaves you exposed. Run bots over, but crash into walls and you get hurt; enough damage blows the vehicle up.
 - **Grenades** — bounce, explode after 2.5 s, hurt everyone nearby and blow holes in walls.
+- **1–100 AI opponents** and four difficulties: Easy, Normal, Hard and **Hell** (bots hunt you with near-perfect aim). Bots spread their landings across the island.
 - **Shrinking zone**, cargo-plane drop, AI bots that loot and fight, kill feed, victory screen.
 
 ## 🛠️ Local development
@@ -56,4 +59,4 @@ Pushing to `main` builds and deploys to GitHub Pages via GitHub Actions.
 
 ### 한국어
 
-블록으로 된 섬에서 펼쳐지는 20인 배틀로얄입니다. 마을에서 파밍하고, 곡괭이로 자원을 캐서 **[Q] 제작 메뉴**로 장비를 만들고, 자기장을 피해 최후의 1인이 되세요. 시작 화면에서 **한국어**를 선택할 수 있습니다.
+블록으로 된 섬에서 펼쳐지는 20인 배틀로얄입니다. 마을에서 파밍하고, 지프나 오토바이로 이동하고, 곡괭이로 자원을 캐서 **[Q] 제작 메뉴**로 장비를 만들고, 자기장을 피해 최후의 1인이 되세요. 시작 화면에서 **한국어**를 선택할 수 있습니다.
